@@ -1,14 +1,19 @@
 import { auth } from "../firebase";
-import { createUserWithEmailAndPassword } from "firebase/auth";
+import { createUserWithEmailAndPassword, UserCredential } from "firebase/auth";
+import { FirebaseError } from "firebase/app";
 
 export const signUp = async (email: string, password: string): Promise<UserCredential | null> => {
     try {
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        const user = userCredential.user;
-        console.log("User created:", user);
-    } catch {
-        console.error("Error code:", error.code);
-        console.error("Error message:", error.message);
+        console.log("User created:", userCredential.user);
+        return userCredential;
+    } catch (error) {
+        if (error instanceof FirebaseError) {
+            console.log(error.code);
+            console.log(error.message);
+        } else {
+            console.log("Unkown Error:", error);
+        }
         return null;
     }
 }
