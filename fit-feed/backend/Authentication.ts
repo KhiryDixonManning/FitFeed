@@ -1,5 +1,5 @@
-import { auth } from "../firebase";
-import { createUserWithEmailAndPassword, UserCredential, signInWithEmailAndPassword, signOut } from "firebase/auth";
+import { auth } from "../firebase.js";
+import { createUserWithEmailAndPassword, type UserCredential, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { FirebaseError } from "firebase/app";
 
 export const signUp = async (email: string, password: string): Promise<UserCredential | null> => {
@@ -47,3 +47,5 @@ export const logout = async (): Promise<void> => {
         }
     }
 }
+
+//Should implement a useAuth hook latter
