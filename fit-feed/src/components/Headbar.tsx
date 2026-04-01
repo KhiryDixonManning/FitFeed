@@ -1,18 +1,32 @@
-import { Link } from 'react-router-dom';
-import './Headbar.css';
 
-export default function Headbar() {
+import { Link } from 'react-router-dom';
+
+  export default function Headbar() {
   return (
-    <header className="headbar">
-      <div className="headbar__logo">
-        <Link to="/">FitFeed</Link>
-        <h1>TESTING</h1>
+    <header className="flex items-center justify-between px-4 py-4 bg-white border border-blue-400 rounded-md mx-4 mt-4 shadow-lg drop-shadow-lg">
+      {/* Left: Logo */}
+      <div className="flex items-center">
+        <div className="w-28 h-28 rounded-xl flex items-center justify-center bg-gradient-to-br from-pink-500 to-blue-500 mr-8">
+          <span className="text-white text-3xl font-light">Logo</span>
+        </div>
       </div>
-      <nav className="headbar__nav">
-        <Link to="/">Feed</Link>
-        <Link to="/upload">Upload</Link>
-        <Link to="/profile">Profile</Link>
-      </nav>
+
+      {/* Center: Navigation */}
+      <div className="flex-1 flex items-center justify-center gap-12">
+        <span className="text-3xl font-bold text-black drop-shadow-[2px_2px_2px_rgba(0,0,0,0.25)]">Project Name</span>
+        <Link to="/" className="text-2xl font-bold text-black drop-shadow-[2px_2px_2px_rgba(0,0,0,0.25)] hover:text-blue-500">Feed</Link>
+        <span className="text-2xl font-bold text-black drop-shadow-[2px_2px_2px_rgba(0,0,0,0.25)] cursor-pointer hover:text-blue-500">Leader Board</span>
+      </div>
+
+      {/* Right: Profile and Add Button */}
+      <div className="flex items-center gap-8">
+        {/* Profile image placeholder */}
+        <div className="w-20 h-20 rounded-full bg-gray-300 border-4 border-white shadow-md"></div>
+        {/* Add button */}
+        <button className="w-28 h-28 rounded-xl flex items-center justify-center bg-gradient-to-br from-pink-500 to-blue-500 text-white text-5xl font-light focus:outline-none">
+          +
+        </button>
+      </div>
     </header>
   );
 }
