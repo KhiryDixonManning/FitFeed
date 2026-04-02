@@ -1,10 +1,11 @@
+interface Props {
+  uid: string;
+}
 
-import Headbar from "../components/Headbar";
-
-export default function Feed() {
+export default function Feed({ uid }: Props) {
   return (
     <div>
-      <Headbar />
+      <p>Feed Page (uid: {uid})</p>
     </div>
   );
 }

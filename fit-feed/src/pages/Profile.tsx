@@ -1,10 +1,11 @@
-import Headbar from "../components/Headbar";
+interface Props {
+  uid: string;
+}
 
-export default function Profile() {
+export default function Profile({ uid }: Props) {
   return (
     <div>
-      <Headbar />
-      <p>Profile Page</p>
+      <p>Profile Page (uid: {uid})</p>
     </div>
   );
 }

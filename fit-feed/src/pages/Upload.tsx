@@ -1,10 +1,11 @@
-import Headbar from "../components/Headbar";
+interface Props {
+  uid: string;
+}
 
-export default function Upload() {
+export default function Upload({ uid }: Props) {
   return (
     <div>
-      <Headbar />
-      <p>Upload Page</p>
+      <p>Upload Page (uid: {uid})</p>
     </div>
   );
 }
