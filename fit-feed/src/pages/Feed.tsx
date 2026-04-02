@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { getRankedFeed, recordInteraction } from '../feedService';
 import { type Post } from '../FirebaseDB';
 import { CATEGORIES } from '../constants/categories';
+import Headbar from '../components/Headbar';
 
 interface Props {
   uid: string;
@@ -35,6 +36,7 @@ export default function Feed({ uid }: Props) {
 
   return (
     <div className="px-6 py-4 text-left">
+      <Headbar />
       {/* Category filter bar */}
       <div className="flex gap-2 flex-wrap mb-6">
         <button

@@ -1,7 +1,7 @@
 import { getPosts } from "./FirebaseDB";
 import { getUserPreferences, saveUserPreferences } from "./FirebaseDB";
 
-const PYTHON_API = "http://localhost:5000";
+const PYTHON_API = "http://localhost:5173";
 
 export const getRankedFeed = async (uid: string): Promise<any[]> => {
     const [posts, userPreferences] = await Promise.all([

@@ -28,7 +28,7 @@ export default function App() {
       {user && <Navbar />}
       <Routes>
         <Route path="/login" element={!user ? <Login /> : <Navigate to="/" />} />
-        <Route path="/" element={user ? <Feed uid={user.uid} /> : <Navigate to="/login" />} />
+        <Route path="/" element={user ? <Feed uid={user.uid} /> : <Navigate to="/feed" />} />
         <Route path="/upload" element={user ? <Upload uid={user.uid} /> : <Navigate to="/login" />} />
         <Route path="/profile" element={user ? <Profile uid={user.uid} /> : <Navigate to="/login" />} />
         <Route path="/leaderboard" element={user ? <Leaderboard /> : <Navigate to="/login" />} />
