@@ -26,7 +26,7 @@ import { Link } from 'react-router-dom';
           <button className="w-28 h-28 rounded-xl flex items-center justify-center bg-gradient-to-br from-pink-500 to-blue-500 text-white text-5xl font-light focus:outline-none hover:opacity-80 transition-opacity">
             +
           </button>
-xx        </a> 
+        </a> 
       </div>
     </header>
   );

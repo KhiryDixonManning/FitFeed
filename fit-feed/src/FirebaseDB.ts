@@ -1,6 +1,7 @@
 import { collection, addDoc, DocumentReference, getDocs, query, orderBy, doc, getDoc, setDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { FirebaseError } from "firebase/app";
+import { type Category } from "./constants/categories";
 
 export interface User {
     uid: string;
@@ -15,7 +16,8 @@ export interface Post {
     imageUrl?: string;
     createdAt: Date;
     updatedAt?: Date;
-    category?: string;
+    category?: Category;
+    outfitBreakdown?: string;
     likesCount?: number;
     commentsCount?: number;
 }
