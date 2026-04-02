@@ -1,3 +1,10 @@
+import Headbar from "../components/Headbar";
+
 export default function Profile() {
-  return <h1>Profile Page</h1>;
+  return (
+    <div>
+      <Headbar />
+      <p>Profile Page</p>
+    </div>
+  );
 }

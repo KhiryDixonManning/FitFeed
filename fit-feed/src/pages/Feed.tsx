@@ -1,10 +1,10 @@
-import Headbar from "../components/Headbar"
+
+import Headbar from "../components/Headbar";
 
 export default function Feed() {
   return (
     <div>
-      <h1>Feed Page</h1>
-      <p>test</p>
+      <Headbar />
     </div>
   );
 }
