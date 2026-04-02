@@ -14,6 +14,9 @@ export interface Post {
     authorId: string;
     content?: string;
     imageUrl?: string;
+    category?: string;
+    likesCount: number;
+    commentsCount?: number;
     createdAt: Date;
     updatedAt?: Date;
     category?: Category;
