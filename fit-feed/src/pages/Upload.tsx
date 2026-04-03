@@ -1,6 +1,5 @@
 import { useState } from "react";
 import Headbar from "../components/Headbar";
-import { ImageIcon } from "lucide-react";
 
 export default function Upload() {
   const [preview, setPreview] = useState<string | null>(null);
@@ -28,7 +27,8 @@ export default function Upload() {
             {preview ? (
               <img src={preview} alt="Preview" className="w-full h-full object-cover" />
             ) : (
-              <ImageIcon className="w-24 h-24 text-gray-500" strokeWidth={1} />
+              //place svg here
+              null
             )}
           </div>
 
