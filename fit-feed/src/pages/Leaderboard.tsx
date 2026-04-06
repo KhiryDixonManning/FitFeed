@@ -41,7 +41,7 @@ export default function Leaderboard() {
         <div className="min-h-screen bg-white">
             <Headbar />
             <div className="flex flex-col items-center px-4 pt-8 gap-5">
-                {/* Weekly Theme header */}
+                {/* Weekly Theme header Replace this with dynamic weekly theme */}
                 <div className="bg-linear-to-r from-pink-400 via-rose-300 to-indigo-400 rounded-full px-10 py-3 shadow-md">
                     <span className="text-white font-bold text-2xl tracking-wide">Weekly Theme</span>
                 </div>
