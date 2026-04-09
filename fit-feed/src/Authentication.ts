@@ -2,6 +2,7 @@ import { auth } from "../firebase";
 import { createUserWithEmailAndPassword, type UserCredential, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { FirebaseError } from "firebase/app";
 import { useEffect, useState } from "react";
+import { getDoc } from "firebase/firestore";
 
 export const signUp = async (email: string, password: string): Promise<UserCredential | null> => {
     try {
@@ -50,9 +51,3 @@ export const logout = async (): Promise<void> => {
 }
 
 //Should implement a useAuth hook latter
-export const useAuth = async () => {
-    const [loading, setLoading] = useState("Loading...");
-    useEffect(() => {
-        const 
-    }, [])
-}
