@@ -17,6 +17,7 @@ export default function App() {
         <Route path="/leaderboard" element={<Leaderboard />} />
         <Route path="/user-profile" element={<UserProfile />} />
         <Route path="/feed" element={<Feed />} />
+        <Route path="/login" element={<Login />} />
       </Routes>
     </div>
   );

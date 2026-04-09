@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { login, signUp } from '../Authentication';
+import { Link } from 'react-router';
 
 export default function Login() {
   const [email, setEmail]       = useState('');
@@ -47,6 +48,11 @@ export default function Login() {
           {isSignUp ? 'Already have an account? Log in' : "Don't have an account? Sign up"}
         </button>
       </div>
+        <div>
+          <Link to="/feed">
+            <button> HOME PAGE </button>
+          </Link>
+        </div>
     </div>
   );
 }

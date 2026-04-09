@@ -15,14 +15,14 @@ import ProfileAvatar from './ProfileAvatar';
       {/* Center: Navigation */}
       <div className="flex-1 flex items-center justify-center gap-12">
         <span className="text-3xl font-bold text-black drop-shadow-[2px_2px_2px_rgba(0,0,0,0.25)]">Fit Feed</span>
-        <Link to="/" className="text-2xl font-bold text-black drop-shadow-[2px_2px_2px_rgba(0,0,0,0.25)] hover:text-blue-500">Feed</Link>
+        <Link to="/feed" className="text-2xl font-bold text-black drop-shadow-[2px_2px_2px_rgba(0,0,0,0.25)] hover:text-blue-500">Feed</Link>
         <Link to="/leaderboard" className="text-2xl font-bold text-black drop-shadow-[2px_2px_2px_rgba(0,0,0,0.25)] cursor-pointer hover:text-blue-500">Leader Board</Link>
       </div>
 
       {/* Right: Profile and Add Button */}
       <div className="flex items-center gap-8">
         {/* Profile image placeholder */}
-        <Link to="/profile" className="cursor-pointer">
+        <Link to="/user-profile" className="cursor-pointer">
           <ProfileAvatar className="w-20 h-20 rounded-full shadow-md hover:opacity-80 transition-opacity" />
         </Link>
         <Link to="/upload" className="cursor-pointer">
