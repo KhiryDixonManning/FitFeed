@@ -1,4 +1,4 @@
-
+import { useState, useEffect } from "react";
 import Headbar from "../components/Headbar";
 import Post from "../components/Post";
 
@@ -12,6 +12,14 @@ interface PostData {
 }
 
 export default function Feed() {
+  const [apiOnline, setApiOnline] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/health")
+      .then(res => { if (!res.ok) setApiOnline(false); })
+      .catch(() => setApiOnline(false));
+  }, []);
+
   // Sample posts data - replace with real data from Firebase
   const samplePosts: PostData[] = [
     {
@@ -67,6 +75,11 @@ export default function Feed() {
   return (
     <div className="min-h-screen bg-gray-50">
       <Headbar />
+      {!apiOnline && (
+        <div className="bg-yellow-100 text-yellow-800 text-sm px-4 py-2 text-center">
+          Ranking server is offline — showing unranked posts
+        </div>
+      )}
       <div className="p-6">
         <div className="grid grid-cols-2 gap-6 auto-rows-max">
           {samplePosts.map((post) => (
