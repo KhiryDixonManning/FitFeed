@@ -1,4 +1,5 @@
 import React from "react";
+import { useNavigate } from "react-router-dom";
 import ProfileAvatar from "./ProfileAvatar";
 
 interface PostProps {
@@ -19,6 +20,11 @@ const Post: React.FC<PostProps> = ({
 	commentCount,
 	avatarSize = 40,
 }) => {
+	const navigate = useNavigate();
+
+	const handleAvatarClick = () => {
+		navigate("/profile");
+	};
 	return (
 		<div className="rounded-2xl shadow-lg bg-white max-w-xs w-full overflow-hidden flex flex-col">
 			{/* Image section */}
@@ -40,7 +46,12 @@ const Post: React.FC<PostProps> = ({
 			</div>
 			{/* Info section */}
 			<div className="flex flex-row items-center gap-2 px-3 py-2 bg-white -mt-6 relative z-10 rounded-b-2xl shadow-md">
-				<ProfileAvatar size={avatarSize} className="border-2 border-white -mt-6" />
+				<button
+					onClick={handleAvatarClick}
+					className="cursor-pointer hover:opacity-80 transition"
+				>
+					<ProfileAvatar size={avatarSize} className="border-2 border-white -mt-6" />
+				</button>
 				<div className="flex flex-col flex-1">
 					<span className="font-semibold text-gray-900 leading-tight">{caption}</span>
 					<span className="text-gray-500 text-sm">@{username}</span>

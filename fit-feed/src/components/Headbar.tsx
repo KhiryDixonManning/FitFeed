@@ -22,14 +22,14 @@ import ProfileAvatar from './ProfileAvatar';
       {/* Right: Profile and Add Button */}
       <div className="flex items-center gap-8">
         {/* Profile image placeholder */}
-        <a href="/profile" className="cursor-pointer">
+        <Link to="/user-profile" className="cursor-pointer">
           <ProfileAvatar className="w-20 h-20 rounded-full shadow-md hover:opacity-80 transition-opacity" />
-        </a>
-        <a href="/upload" className="cursor-pointer">
+        </Link>
+        <Link to="/upload" className="cursor-pointer">
           <button className="w-28 h-28 rounded-xl flex items-center justify-center bg-gradient-to-br from-pink-500 to-blue-500 text-white text-5xl font-light focus:outline-none hover:opacity-80 transition-opacity">
             +
           </button>
-        </a> 
+        </Link> 
       </div>
     </header>
   );
