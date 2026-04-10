@@ -37,5 +37,10 @@ def trending():
     return jsonify(trending_posts)
 
 
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok"})
+
+
 if __name__ == "__main__":
     app.run(debug=True)

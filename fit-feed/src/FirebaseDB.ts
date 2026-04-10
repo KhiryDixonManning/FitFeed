@@ -1,6 +1,7 @@
-import { collection, addDoc, DocumentReference, getDocs, query, orderBy } from "firebase/firestore";
+import { collection, addDoc, DocumentReference, getDocs, query, orderBy, doc, getDoc, setDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { FirebaseError } from "firebase/app";
+import { type Category } from "./constants/categories";
 
 export interface User {
     uid: string;
@@ -13,8 +14,15 @@ export interface Post {
     authorId: string;
     content?: string;
     imageUrl?: string;
+    category?: string;
+    likesCount: number;
+    commentsCount?: number;
     createdAt: Date;
     updatedAt?: Date;
+    category?: Category;
+    outfitBreakdown?: string;
+    likesCount?: number;
+    commentsCount?: number;
 }
 
 export const addPost = async (post: Omit<Post, "createdAt">): Promise<DocumentReference<Post> | null> => {
@@ -52,8 +60,28 @@ export const getPosts = async (): Promise<Post[]> => {
             console.log(error.code);
             console.log(error.message);
         } else {
-            console.log("Unkown error:", error);
+            console.log("Unknown error:", error);
         }
         return [];
+    }
+};
+
+export const getUserPreferences = async (uid: string): Promise<Record<string, number>> => {
+    try {
+        const docRef = doc(db, "userPreferences", uid);
+        const docSnap = await getDoc(docRef);
+        return docSnap.exists() ? (docSnap.data() as Record<string, number>) : {};
+    } catch (error) {
+        console.log("Error fetching preferences:", error);
+        return {};
+    }
+};
+
+export const saveUserPreferences = async (uid: string, preferences: Record<string, number>): Promise<void> => {
+    try {
+        const docRef = doc(db, "userPreferences", uid);
+        await setDoc(docRef, preferences);
+    } catch (error) {
+        console.log("Error saving preferences:", error);
     }
 };

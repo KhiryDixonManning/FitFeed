@@ -27,4 +27,4 @@ const testAuth = async () => {
 };
 
 testAuth();
-// run npx ts-node backend/testAuthentication
+// npx ts-node backend/testAuthentication
