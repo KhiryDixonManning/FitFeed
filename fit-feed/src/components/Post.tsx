@@ -34,20 +34,21 @@ const Post: React.FC<PostProps> = ({
 	return (
 		<div className="rounded-2xl shadow-lg bg-white max-w-xs w-full overflow-hidden flex flex-col">
 			{/* Image section */}
-			<div className="bg-gray-200 flex items-center justify-center" style={{ minHeight: 180 }}>
+			<div className="bg-gray-200 overflow-hidden">
 				{imageUrl ? (
 					<img
 						src={imageUrl}
 						alt="Post"
-						className="object-cover w-full h-44"
-						style={{ maxHeight: 180 }}
+						className="w-full aspect-square object-cover"
 					/>
 				) : (
-					<svg className="w-20 h-20 text-gray-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-						<rect width="20" height="20" x="2" y="2" rx="5" />
-						<circle cx="8.5" cy="8.5" r="2.5" />
-						<path d="M21 21l-6-6-4 4-5-5" />
-					</svg>
+					<div className="w-full aspect-square flex items-center justify-center">
+						<svg className="w-20 h-20 text-gray-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+							<rect width="20" height="20" x="2" y="2" rx="5" />
+							<circle cx="8.5" cy="8.5" r="2.5" />
+							<path d="M21 21l-6-6-4 4-5-5" />
+						</svg>
+					</div>
 				)}
 			</div>
 			{/* Info section */}

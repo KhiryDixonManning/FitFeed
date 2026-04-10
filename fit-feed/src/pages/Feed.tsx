@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
-import PostCard from "../components/Post";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "../../firebase";
+import PostCard from "../components/PostCard";
 import { getRankedFeed, recordInteraction } from "../feedService";
-import { toggleLike } from "../FirebaseDB";
-import type { Post } from "../FirebaseDB";
+import { toggleLike, type Post } from "../FirebaseDB";
 
 interface FeedProps {
   uid: string;
@@ -13,6 +14,7 @@ export default function Feed({ uid }: FeedProps) {
   const [loading, setLoading] = useState(true);
   const [apiOnline, setApiOnline] = useState(true);
   const [likingIds, setLikingIds] = useState<Set<string>>(new Set());
+  const [authorEmails, setAuthorEmails] = useState<Record<string, string>>({});
 
   useEffect(() => {
     fetch("/api/health")
@@ -25,6 +27,24 @@ export default function Feed({ uid }: FeedProps) {
       setLoading(true);
       const ranked = await getRankedFeed(uid);
       setPosts(ranked);
+
+      // Batch-fetch author emails so posts show readable names instead of UIDs
+      const emailMap: Record<string, string> = {};
+      await Promise.all(
+        ranked.map(async (post) => {
+          if (!emailMap[post.authorId]) {
+            try {
+              const userDoc = await getDoc(doc(db, 'users', post.authorId));
+              emailMap[post.authorId] = userDoc.exists()
+                ? (userDoc.data().email || post.authorId)
+                : post.authorId;
+            } catch {
+              emailMap[post.authorId] = post.authorId;
+            }
+          }
+        })
+      );
+      setAuthorEmails(emailMap);
       setLoading(false);
     };
     fetchFeed();
@@ -35,7 +55,7 @@ export default function Feed({ uid }: FeedProps) {
 
     const wasLiked = post.likedBy?.includes(uid) ?? false;
 
-    // Optimistic update — update UI instantly before Firestore confirms
+    // Optimistic update
     setPosts(prev => prev.map(p =>
       p.id === post.id
         ? {
@@ -51,7 +71,6 @@ export default function Feed({ uid }: FeedProps) {
     setLikingIds(prev => new Set(prev).add(post.id));
 
     const didLike = await toggleLike(post.id, uid);
-
     if (didLike && post.category) {
       await recordInteraction(uid, post.category, "like");
     }
@@ -61,6 +80,12 @@ export default function Feed({ uid }: FeedProps) {
       next.delete(post.id);
       return next;
     });
+  };
+
+  const handleCommentAdded = (postId: string) => {
+    setPosts(prev => prev.map(p =>
+      p.id === postId ? { ...p, commentsCount: (p.commentsCount || 0) + 1 } : p
+    ));
   };
 
   return (
@@ -74,20 +99,19 @@ export default function Feed({ uid }: FeedProps) {
         {loading ? (
           <div className="text-center text-gray-400 py-12">Loading feed...</div>
         ) : posts.length === 0 ? (
-          <div className="text-center text-gray-400 py-12">No posts yet.</div>
+          <div className="text-center text-gray-400 py-12">No posts yet. Be the first to share a fit!</div>
         ) : (
           <div className="grid grid-cols-2 gap-6 auto-rows-max">
             {posts.map((post) => (
               <PostCard
                 key={post.id}
-                imageUrl={post.imageUrl ?? ""}
-                username={post.authorId}
-                caption={post.content ?? ""}
-                likeCount={post.likesCount ?? 0}
-                commentCount={post.commentsCount ?? 0}
+                post={post}
+                uid={uid}
+                authorEmail={authorEmails[post.authorId] || post.authorId}
                 isLiked={post.likedBy?.includes(uid) ?? false}
                 onLike={() => handleLike(post)}
                 liking={likingIds.has(post.id)}
+                onCommentAdded={handleCommentAdded}
               />
             ))}
           </div>

@@ -1,5 +1,5 @@
 import {
-  collection, addDoc, DocumentReference, getDocs, query, orderBy,
+  collection, addDoc, DocumentReference, getDocs, query, orderBy, where,
   doc, getDoc, setDoc, updateDoc, increment, arrayUnion, arrayRemove,
 } from "firebase/firestore";
 import { db } from "../firebase";
@@ -24,6 +24,15 @@ export interface Post {
     updatedAt?: string;
     outfitBreakdown?: string;
     likedBy?: string[];
+}
+
+export interface Comment {
+    id: string;
+    postId: string;
+    authorId: string;
+    authorEmail: string;
+    content: string;
+    createdAt: string;
 }
 
 export const addPost = async (post: Omit<Post, "id" | "createdAt">): Promise<DocumentReference | null> => {
@@ -113,5 +122,52 @@ export const saveUserPreferences = async (uid: string, preferences: Record<strin
         await setDoc(docRef, preferences);
     } catch (error) {
         console.log("Error saving preferences:", error);
+    }
+};
+
+/**
+ * NOTE: getComments uses a composite index on (postId ASC, createdAt ASC).
+ * If this query fails with a "requires an index" error, click the link in the
+ * browser console — it opens the Firebase Console to create the index automatically.
+ */
+export const getComments = async (postId: string): Promise<Comment[]> => {
+    try {
+        const q = query(
+            collection(db, "comments"),
+            where("postId", "==", postId),
+            orderBy("createdAt", "asc")
+        );
+        const snapshot = await getDocs(q);
+        return snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Comment));
+    } catch (error) {
+        console.log("Error fetching comments:", error);
+        return [];
+    }
+};
+
+export const addComment = async (
+    postId: string,
+    authorId: string,
+    authorEmail: string,
+    content: string
+): Promise<boolean> => {
+    try {
+        await addDoc(collection(db, "comments"), {
+            postId,
+            authorId,
+            authorEmail,
+            content,
+            createdAt: new Date().toISOString(),
+        });
+
+        // Increment commentsCount on the post
+        await updateDoc(doc(db, "posts", postId), {
+            commentsCount: increment(1),
+        });
+
+        return true;
+    } catch (error) {
+        console.log("Error adding comment:", error);
+        return false;
     }
 };

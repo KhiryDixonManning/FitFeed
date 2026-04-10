@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
 import { auth } from '../../firebase';
+import { db } from '../../firebase';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -14,11 +16,23 @@ export default function Login() {
     setLoading(true);
     try {
       if (isSignUp) {
-        await createUserWithEmailAndPassword(auth, email, password);
+        const credential = await createUserWithEmailAndPassword(auth, email, password);
+        // Save user profile to Firestore so other pages can look up email by uid
+        await setDoc(doc(db, 'users', credential.user.uid), {
+          uid: credential.user.uid,
+          email: credential.user.email,
+          displayName: '',
+          createdAt: new Date().toISOString(),
+        });
       } else {
-        await signInWithEmailAndPassword(auth, email, password);
+        const credential = await signInWithEmailAndPassword(auth, email, password);
+        // Upsert user doc — creates it for old accounts, leaves existing data intact
+        await setDoc(doc(db, 'users', credential.user.uid), {
+          uid: credential.user.uid,
+          email: credential.user.email,
+        }, { merge: true });
       }
-      // No redirect needed here — onAuthStateChanged in App.tsx handles it
+      // No redirect needed — onAuthStateChanged in App.tsx handles it
     } catch (err: any) {
       setError(err.code || 'Authentication failed');
     } finally {
