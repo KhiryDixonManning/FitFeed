@@ -1,19 +1,29 @@
 import { useState } from 'react';
-import { login, signUp } from '../Authentication';
-import { Link } from 'react-router';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
+import { auth } from '../../firebase';
 
 export default function Login() {
-  const [email, setEmail]       = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
-  const [error, setError]       = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
   const handleSubmit = async () => {
     setError('');
-    const result = isSignUp
-      ? await signUp(email, password)
-      : await login(email, password);
-    if (!result) setError('Authentication failed. Check your credentials.');
+    setLoading(true);
+    try {
+      if (isSignUp) {
+        await createUserWithEmailAndPassword(auth, email, password);
+      } else {
+        await signInWithEmailAndPassword(auth, email, password);
+      }
+      // No redirect needed here — onAuthStateChanged in App.tsx handles it
+    } catch (err: any) {
+      setError(err.code || 'Authentication failed');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -37,9 +47,10 @@ export default function Login() {
         {error && <p className="text-red-500 text-sm">{error}</p>}
         <button
           onClick={handleSubmit}
-          className="bg-[var(--accent)] text-white rounded px-4 py-2 font-medium hover:opacity-90 transition"
+          disabled={loading}
+          className="bg-[var(--accent)] text-white rounded px-4 py-2 font-medium hover:opacity-90 transition disabled:opacity-50"
         >
-          {isSignUp ? 'Sign Up' : 'Log In'}
+          {loading ? 'Signing in...' : isSignUp ? 'Sign Up' : 'Log In'}
         </button>
         <button
           onClick={() => setIsSignUp(s => !s)}
@@ -48,11 +59,6 @@ export default function Login() {
           {isSignUp ? 'Already have an account? Log in' : "Don't have an account? Sign up"}
         </button>
       </div>
-        <div>
-          <Link to="/feed">
-            <button> HOME PAGE </button>
-          </Link>
-        </div>
     </div>
   );
 }

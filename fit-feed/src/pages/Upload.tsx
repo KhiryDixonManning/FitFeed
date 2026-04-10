@@ -1,71 +1,119 @@
-import { useState } from "react";
-import Headbar from "../components/Headbar";
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { addPost } from '../FirebaseDB';
+import { CATEGORIES } from '../constants/categories';
 
-export default function Upload() {
+interface UploadProps {
+  uid: string;
+}
+
+export default function Upload({ uid }: UploadProps) {
+  const navigate = useNavigate();
+  const [image, setImage] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
-  const [caption, setCaption] = useState("");
+  const [caption, setCaption] = useState('');
+  const [category, setCategory] = useState('');
+  const [outfitBreakdown, setOutfitBreakdown] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      setImage(file);
       setPreview(URL.createObjectURL(file));
     }
   };
 
-  const handlePublish = () => {
-    // Firebase upload logic will go here
+  const handlePublish = async () => {
+    if (!image) { setError('Please select an image.'); return; }
+    if (!category) { setError('Please select a category.'); return; }
+    if (!caption.trim()) { setError('Please add a caption.'); return; }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      const storage = getStorage();
+      const storageRef = ref(storage, `posts/${uid}/${Date.now()}_${image.name}`);
+      await uploadBytes(storageRef, image);
+      const imageUrl = await getDownloadURL(storageRef);
+
+      await addPost({
+        authorId: uid,
+        content: caption,
+        imageUrl,
+        category: category as any,
+        outfitBreakdown,
+        likesCount: 0,
+        commentsCount: 0,
+        likedBy: [],
+      });
+
+      navigate('/');
+    } catch (err: any) {
+      setError(err.message || 'Failed to publish. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
-    <div>
-      <Headbar />
-      <div className="flex items-center justify-center min-h-screen bg-gray-50">
-        <div className="flex flex-row items-start gap-8 p-8">
+    <div className="max-w-lg mx-auto p-6">
+      <h2 className="text-2xl font-bold text-[var(--text-h)] mb-6">Upload Fit</h2>
 
-          {/* Preview */}
-          <div className="w-80 h-80 bg-gray-200 rounded-2xl flex items-center justify-center shadow-md overflow-hidden">
-            {preview ? (
-              <img src={preview} alt="Preview" className="w-full h-full object-cover" />
-            ) : (
-              //place svg here
-              null
-            )}
-          </div>
-
-          {/* Controls */}
-          <div className="flex flex-col gap-4 w-64">
-
-            {/* Choose Photo Button */}
-            <label className="cursor-pointer">
-              <span className="block text-center text-white font-semibold py-2 px-4 rounded-full bg-gradient-to-r from-pink-500 to-blue-400 hover:opacity-90 transition">
-                Choose a Photo
-              </span>
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handlePhotoChange}
-              />
-            </label>
-
-            {/* Caption Input */}
-            <textarea
-              value={caption}
-              onChange={(e) => setCaption(e.target.value)}
-              placeholder="Enter a caption here"
-              className="w-full h-48 p-3 border border-gray-300 rounded-lg resize-none text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-pink-300"
-            />
-
-            {/* Publish Button */}
-            <button
-              onClick={handlePublish}
-              className="text-white font-semibold py-2 px-4 rounded-full bg-gradient-to-r from-pink-500 to-blue-400 hover:opacity-90 transition"
-            >
-              Publish
-            </button>
-
-          </div>
+      <div className="flex flex-col gap-4">
+        <div className="border-2 border-dashed border-[var(--border)] rounded-lg p-6 text-center">
+          {preview ? (
+            <img src={preview} alt="preview" className="w-full aspect-square object-cover rounded-lg" />
+          ) : (
+            <p className="text-[var(--text)] text-sm">Click to select an image</p>
+          )}
+          <input
+            type="file"
+            accept="image/*"
+            onChange={handleImageChange}
+            className="mt-3 text-sm text-[var(--text)]"
+          />
         </div>
+
+        <input
+          type="text"
+          placeholder="Caption"
+          value={caption}
+          onChange={e => setCaption(e.target.value)}
+          className="border border-[var(--border)] rounded px-3 py-2 bg-[var(--bg)] text-[var(--text-h)] text-sm"
+        />
+
+        <select
+          value={category}
+          onChange={e => setCategory(e.target.value)}
+          className="border border-[var(--border)] rounded px-3 py-2 bg-[var(--bg)] text-[var(--text-h)] text-sm"
+        >
+          <option value="">Select a category</option>
+          {CATEGORIES.map(cat => (
+            <option key={cat} value={cat}>{cat}</option>
+          ))}
+        </select>
+
+        <textarea
+          placeholder="Outfit breakdown (e.g. thrifted Levi jacket, vintage Nikes...)"
+          value={outfitBreakdown}
+          onChange={e => setOutfitBreakdown(e.target.value)}
+          rows={3}
+          className="border border-[var(--border)] rounded px-3 py-2 bg-[var(--bg)] text-[var(--text-h)] text-sm resize-none"
+        />
+
+        {error && <p className="text-red-500 text-sm">{error}</p>}
+
+        <button
+          onClick={handlePublish}
+          disabled={loading}
+          className="bg-[var(--accent)] text-white rounded px-4 py-2 font-medium hover:opacity-90 transition disabled:opacity-50"
+        >
+          {loading ? 'Publishing...' : 'Publish'}
+        </button>
       </div>
     </div>
   );

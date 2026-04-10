@@ -1,8 +1,6 @@
 import { auth } from "../firebase";
 import { createUserWithEmailAndPassword, type UserCredential, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { FirebaseError } from "firebase/app";
-import { useEffect, useState } from "react";
-import { getDoc } from "firebase/firestore";
 
 export const signUp = async (email: string, password: string): Promise<UserCredential | null> => {
     try {

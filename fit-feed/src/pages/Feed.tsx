@@ -1,18 +1,18 @@
 import { useState, useEffect } from "react";
-import Headbar from "../components/Headbar";
-import Post from "../components/Post";
+import PostCard from "../components/Post";
+import { getRankedFeed, recordInteraction } from "../feedService";
+import { toggleLike } from "../FirebaseDB";
+import type { Post } from "../FirebaseDB";
 
-interface PostData {
-  id: string;
-  imageUrl: string;
-  username: string;
-  caption: string;
-  likeCount: number;
-  commentCount: number;
+interface FeedProps {
+  uid: string;
 }
 
-export default function Feed() {
+export default function Feed({ uid }: FeedProps) {
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [loading, setLoading] = useState(true);
   const [apiOnline, setApiOnline] = useState(true);
+  const [likingIds, setLikingIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     fetch("/api/health")
@@ -20,79 +20,78 @@ export default function Feed() {
       .catch(() => setApiOnline(false));
   }, []);
 
-  // Sample posts data - replace with real data from Firebase
-  const samplePosts: PostData[] = [
-    {
-      id: "1",
-      imageUrl: "",
-      username: "user1",
-      caption: "This is a sample caption",
-      likeCount: 234,
-      commentCount: 16,
-    },
-    {
-      id: "2",
-      imageUrl: "",
-      username: "user2",
-      caption: "Another sample post",
-      likeCount: 189,
-      commentCount: 42,
-    },
-    {
-      id: "3",
-      imageUrl: "",
-      username: "user3",
-      caption: "Third sample post",
-      likeCount: 312,
-      commentCount: 28,
-    },
-    {
-      id: "4",
-      imageUrl: "",
-      username: "user4",
-      caption: "Fourth sample post",
-      likeCount: 156,
-      commentCount: 19,
-    },
-    {
-      id: "5",
-      imageUrl: "",
-      username: "user5",
-      caption: "Fifth sample post",
-      likeCount: 423,
-      commentCount: 67,
-    },
-    {
-      id: "6",
-      imageUrl: "",
-      username: "user6",
-      caption: "Sixth sample post",
-      likeCount: 278,
-      commentCount: 34,
-    },
-  ];
+  useEffect(() => {
+    const fetchFeed = async () => {
+      setLoading(true);
+      const ranked = await getRankedFeed(uid);
+      setPosts(ranked);
+      setLoading(false);
+    };
+    fetchFeed();
+  }, [uid]);
+
+  const handleLike = async (post: Post) => {
+    if (likingIds.has(post.id)) return;
+
+    const wasLiked = post.likedBy?.includes(uid) ?? false;
+
+    // Optimistic update — update UI instantly before Firestore confirms
+    setPosts(prev => prev.map(p =>
+      p.id === post.id
+        ? {
+            ...p,
+            likesCount: wasLiked ? (p.likesCount || 1) - 1 : (p.likesCount || 0) + 1,
+            likedBy: wasLiked
+              ? p.likedBy?.filter(id => id !== uid)
+              : [...(p.likedBy || []), uid],
+          }
+        : p
+    ));
+
+    setLikingIds(prev => new Set(prev).add(post.id));
+
+    const didLike = await toggleLike(post.id, uid);
+
+    if (didLike && post.category) {
+      await recordInteraction(uid, post.category, "like");
+    }
+
+    setLikingIds(prev => {
+      const next = new Set(prev);
+      next.delete(post.id);
+      return next;
+    });
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Headbar />
       {!apiOnline && (
         <div className="bg-yellow-100 text-yellow-800 text-sm px-4 py-2 text-center">
           Ranking server is offline — showing unranked posts
         </div>
       )}
       <div className="p-6">
-        <div className="grid grid-cols-2 gap-6 auto-rows-max">
-          {samplePosts.map((post) => (
-            <Post
-              key={post.id}
-              imageUrl={post.imageUrl}
-              username={post.username}
-              caption={post.caption}
-              likeCount={post.likeCount}
-              commentCount={post.commentCount}
-            />
-          ))}
-        </div>
+        {loading ? (
+          <div className="text-center text-gray-400 py-12">Loading feed...</div>
+        ) : posts.length === 0 ? (
+          <div className="text-center text-gray-400 py-12">No posts yet.</div>
+        ) : (
+          <div className="grid grid-cols-2 gap-6 auto-rows-max">
+            {posts.map((post) => (
+              <PostCard
+                key={post.id}
+                imageUrl={post.imageUrl ?? ""}
+                username={post.authorId}
+                caption={post.content ?? ""}
+                likeCount={post.likesCount ?? 0}
+                commentCount={post.commentsCount ?? 0}
+                isLiked={post.likedBy?.includes(uid) ?? false}
+                onLike={() => handleLike(post)}
+                liking={likingIds.has(post.id)}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

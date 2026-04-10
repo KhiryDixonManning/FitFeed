@@ -1,4 +1,7 @@
-import { collection, addDoc, DocumentReference, getDocs, query, orderBy, doc, getDoc, setDoc } from "firebase/firestore";
+import {
+  collection, addDoc, DocumentReference, getDocs, query, orderBy,
+  doc, getDoc, setDoc, updateDoc, increment, arrayUnion, arrayRemove,
+} from "firebase/firestore";
 import { db } from "../firebase";
 import { FirebaseError } from "firebase/app";
 import { type Category } from "./constants/categories";
@@ -14,25 +17,23 @@ export interface Post {
     authorId: string;
     content?: string;
     imageUrl?: string;
-    category?: string;
+    category?: Category;
     likesCount: number;
     commentsCount?: number;
-    createdAt: Date;
-    updatedAt?: Date;
-    category?: Category;
+    createdAt: string;
+    updatedAt?: string;
     outfitBreakdown?: string;
-    likesCount?: number;
-    commentsCount?: number;
+    likedBy?: string[];
 }
 
-export const addPost = async (post: Omit<Post, "createdAt">): Promise<DocumentReference<Post> | null> => {
+export const addPost = async (post: Omit<Post, "id" | "createdAt">): Promise<DocumentReference | null> => {
     try {
         const docRef = await addDoc(collection(db, "posts"), {
             ...post,
             createdAt: new Date(),
         });
         console.log("Post created with ID:", docRef.id);
-        return docRef as DocumentReference<Post>;
+        return docRef;
     } catch (error: unknown) {
         if (error instanceof FirebaseError) {
             console.log(error.code);
@@ -42,7 +43,7 @@ export const addPost = async (post: Omit<Post, "createdAt">): Promise<DocumentRe
         }
         return null;
     }
-}
+};
 
 export const getPosts = async (): Promise<Post[]> => {
     try {
@@ -52,7 +53,7 @@ export const getPosts = async (): Promise<Post[]> => {
         const posts: Post[] = querySnapshot.docs.map(doc => ({
             id: doc.id,
             ...doc.data(),
-            createdAt: doc.data().createdAt.toDate(),
+            createdAt: doc.data().createdAt?.toDate().toISOString() ?? new Date().toISOString(),
         } as Post));
         return posts;
     } catch (error: unknown) {
@@ -63,6 +64,35 @@ export const getPosts = async (): Promise<Post[]> => {
             console.log("Unknown error:", error);
         }
         return [];
+    }
+};
+
+export const toggleLike = async (postId: string, uid: string): Promise<boolean> => {
+    try {
+        const postRef = doc(db, "posts", postId);
+        const postSnap = await getDoc(postRef);
+
+        if (!postSnap.exists()) return false;
+
+        const likedBy: string[] = postSnap.data().likedBy || [];
+        const alreadyLiked = likedBy.includes(uid);
+
+        if (alreadyLiked) {
+            await updateDoc(postRef, {
+                likesCount: increment(-1),
+                likedBy: arrayRemove(uid),
+            });
+            return false; // unliked
+        } else {
+            await updateDoc(postRef, {
+                likesCount: increment(1),
+                likedBy: arrayUnion(uid),
+            });
+            return true; // liked
+        }
+    } catch (error) {
+        console.log("Error toggling like:", error);
+        return false;
     }
 };
 

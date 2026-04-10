@@ -23,3 +23,20 @@ dist-ssr
 *.sln
 *.sw?
 screenshots/
+
+# Python
+python-backend/venv/
+__pycache__/
+*.pyc
+
+# Firebase
+.firebase/
+firebase-debug.log
+
+# Env
+.env
+.env.local
+
+# Playwright
+test-results/
+playwright-report/
