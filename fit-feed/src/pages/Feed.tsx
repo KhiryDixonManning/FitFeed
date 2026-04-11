@@ -101,7 +101,7 @@ export default function Feed({ uid }: FeedProps) {
         ) : posts.length === 0 ? (
           <div className="text-center text-gray-400 py-12">No posts yet. Be the first to share a fit!</div>
         ) : (
-          <div className="grid grid-cols-2 gap-6 auto-rows-max">
+          <div className="grid grid-cols-1 gap-6 auto-rows-max md:grid-cols-2">
             {posts.map((post) => (
               <PostCard
                 key={post.id}
