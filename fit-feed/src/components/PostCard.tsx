@@ -71,6 +71,7 @@ export default function PostCard({
             src={post.imageUrl}
             alt={post.content ?? 'outfit'}
             className="w-full aspect-square object-cover"
+            loading="lazy"
           />
         ) : (
           <div className="w-full aspect-square flex items-center justify-center text-gray-400 text-sm">
@@ -109,13 +110,91 @@ export default function PostCard({
         </div>
       )}
 
+      {/* Temporary debug — remove before demo */}
+      {import.meta.env.DEV && (
+        <p className="text-xs text-red-400 px-3 pt-1">
+          analyzed: {String(post.analyzed)} |
+          palette: {post.palette?.length || 0} |
+          tags: {post.aestheticTags?.length || 0}
+        </p>
+      )}
+
+      {/* Color palette — shows whenever palette exists even if full analysis failed */}
+      {post.palette && post.palette.length > 0 && (
+        <div className="flex gap-1 px-3 mt-2">
+          {post.palette.map((hex, i) => (
+            <div
+              key={i}
+              className="w-5 h-5 rounded-full border border-[var(--border)]"
+              style={{ backgroundColor: hex }}
+              title={hex}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Full analysis — only shows when Claude analysis succeeded */}
+      {post.analyzed === true && (
+        <div className="px-3 pt-1 flex flex-col gap-1">
+          {post.aestheticTags && post.aestheticTags.length > 0 && (
+            <div className="flex gap-1 flex-wrap mt-1">
+              {post.aestheticTags.map((tag, i) => (
+                <span
+                  key={i}
+                  className="text-xs border border-[var(--border)] rounded-full px-2 py-0.5 text-[var(--text)]"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {post.detectedItems && post.detectedItems.length > 0 && (
+            <p className="text-xs text-[var(--text)] mt-1">
+              {post.detectedItems.join(' · ')}
+            </p>
+          )}
+
+          {post.styleDescription && (
+            <p className="text-xs italic text-[var(--text)] mt-1">
+              {post.styleDescription}
+            </p>
+          )}
+
+          {post.aestheticScores && Object.keys(post.aestheticScores).length > 0 && (
+            <div className="mt-2 flex flex-col gap-1">
+              {Object.entries(post.aestheticScores)
+                .filter(([, score]) => score > 0.3)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 3)
+                .map(([label, score]) => (
+                  <div key={label} className="flex items-center gap-2">
+                    <span className="text-xs text-[var(--text)] w-24 capitalize">
+                      {label}
+                    </span>
+                    <div className="flex-1 h-1.5 bg-[var(--border)] rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-[var(--accent)] rounded-full"
+                        style={{ width: `${Math.round(score * 100)}%` }}
+                      />
+                    </div>
+                    <span className="text-xs text-[var(--text)]">
+                      {Math.round(score * 100)}%
+                    </span>
+                  </div>
+                ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Actions */}
       <div className="flex items-center gap-4 px-3 py-3">
         {/* Like */}
         <button
           onClick={onLike}
           disabled={liking}
-          className={`flex items-center gap-1 text-sm transition disabled:opacity-50 ${
+          className={`flex items-center gap-1 text-sm p-2 -ml-2 rounded-lg hover:bg-[var(--accent-bg)] transition disabled:opacity-50 min-h-[44px] min-w-[44px] ${
             isLiked ? 'text-pink-500' : 'text-gray-500 hover:text-pink-500'
           }`}
         >
@@ -139,7 +218,7 @@ export default function PostCard({
         {/* Comment toggle */}
         <button
           onClick={handleToggleComments}
-          className={`flex items-center gap-1 text-sm transition ${
+          className={`flex items-center gap-1 text-sm p-2 rounded-lg hover:bg-[var(--accent-bg)] transition min-h-[44px] min-w-[44px] ${
             showComments ? 'text-[var(--accent)]' : 'text-gray-500 hover:text-[var(--accent)]'
           }`}
         >

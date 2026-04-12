@@ -65,8 +65,8 @@ export default function PublicProfile() {
   if (loading) return <div className="p-8 text-center text-[var(--text)]">Loading profile...</div>;
 
   return (
-    <div className="max-w-2xl mx-auto p-6 text-left">
-      <div className="mb-6">
+    <div className="max-w-2xl mx-auto py-6 text-left">
+      <div className="px-4 md:px-0 mb-6">
         <h2 className="text-2xl font-bold text-[var(--text-h)]">@{email || uid}</h2>
         <p className="text-[var(--text)] text-sm mt-1">
           Top style: <span className="text-[var(--accent)] font-medium">{topCategory}</span>
@@ -75,9 +75,9 @@ export default function PublicProfile() {
       </div>
 
       {posts.length === 0 ? (
-        <p className="text-[var(--text)] text-sm">No posts yet.</p>
+        <p className="text-[var(--text)] text-sm px-4 md:px-0">No posts yet.</p>
       ) : (
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 px-4 md:px-0">
           {posts.map(post => (
             <div key={post.id} className="border border-[var(--border)] rounded-lg overflow-hidden">
               {post.imageUrl && (

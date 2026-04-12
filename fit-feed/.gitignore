@@ -36,6 +36,8 @@ firebase-debug.log
 # Env
 .env
 .env.local
+backend/.env
+python-backend/.env
 
 # Playwright
 test-results/

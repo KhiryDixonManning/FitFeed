@@ -4,6 +4,7 @@ import { db } from "../../firebase";
 import PostCard from "../components/PostCard";
 import { getRankedFeed, recordInteraction } from "../feedService";
 import { toggleLike, type Post } from "../FirebaseDB";
+import { CATEGORIES } from "../constants/categories";
 
 interface FeedProps {
   uid: string;
@@ -15,6 +16,8 @@ export default function Feed({ uid }: FeedProps) {
   const [apiOnline, setApiOnline] = useState(true);
   const [likingIds, setLikingIds] = useState<Set<string>>(new Set());
   const [authorEmails, setAuthorEmails] = useState<Record<string, string>>({});
+  const [tab, setTab] = useState<'foryou' | 'discover'>('foryou');
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
 
   useEffect(() => {
     fetch("/api/health")
@@ -88,21 +91,85 @@ export default function Feed({ uid }: FeedProps) {
     ));
   };
 
+  // Discover tab: sort by newest first; For You: keep ranked order
+  const tabPosts = tab === 'discover'
+    ? [...posts].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    : posts;
+
+  const visiblePosts = selectedCategory === 'all'
+    ? tabPosts
+    : tabPosts.filter(p => p.category === selectedCategory);
+
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-[var(--bg)]">
       {!apiOnline && (
         <div className="bg-yellow-100 text-yellow-800 text-sm px-4 py-2 text-center">
           Ranking server is offline — showing unranked posts
         </div>
       )}
-      <div className="p-6">
+
+      <div className="pt-4">
+        {/* For You / Discover toggle */}
+        <div className="flex gap-2 px-4 md:px-6 mb-4">
+          <button
+            onClick={() => setTab('foryou')}
+            className={`flex-1 md:flex-none px-4 py-1.5 rounded-full text-sm font-medium transition ${
+              tab === 'foryou'
+                ? 'bg-[var(--accent)] text-white'
+                : 'border border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)]'
+            }`}
+          >
+            For You
+          </button>
+          <button
+            onClick={() => setTab('discover')}
+            className={`flex-1 md:flex-none px-4 py-1.5 rounded-full text-sm font-medium transition ${
+              tab === 'discover'
+                ? 'bg-[var(--accent)] text-white'
+                : 'border border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)]'
+            }`}
+          >
+            Discover
+          </button>
+        </div>
+
+        {/* Category filter bar — horizontal scroll on all sizes */}
+        <div className="flex gap-2 overflow-x-auto pb-2 mb-4 scrollbar-hide -mx-4 px-4 md:mx-0 md:px-6">
+          <button
+            onClick={() => setSelectedCategory('all')}
+            className={`px-3 py-1 rounded-full text-xs font-medium transition shrink-0 ${
+              selectedCategory === 'all'
+                ? 'bg-[var(--accent)] text-white'
+                : 'border border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)]'
+            }`}
+          >
+            All
+          </button>
+          {CATEGORIES.map(cat => (
+            <button
+              key={cat}
+              onClick={() => setSelectedCategory(cat)}
+              className={`px-3 py-1 rounded-full text-xs font-medium capitalize transition shrink-0 ${
+                selectedCategory === cat
+                  ? 'bg-[var(--accent)] text-white'
+                  : 'border border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)]'
+              }`}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+
+        {/* Posts */}
         {loading ? (
           <div className="text-center text-gray-400 py-12">Loading feed...</div>
-        ) : posts.length === 0 ? (
-          <div className="text-center text-gray-400 py-12">No posts yet. Be the first to share a fit!</div>
+        ) : visiblePosts.length === 0 ? (
+          <div className="text-center text-gray-400 py-12 px-4">
+            {posts.length === 0 ? 'No posts yet. Be the first to share a fit!' : 'No posts in this category yet.'}
+          </div>
         ) : (
-          <div className="grid grid-cols-1 gap-6 auto-rows-max md:grid-cols-2">
-            {posts.map((post) => (
+          <div className="flex flex-col gap-4 px-4 md:px-6">
+            {visiblePosts.map((post) => (
               <PostCard
                 key={post.id}
                 post={post}

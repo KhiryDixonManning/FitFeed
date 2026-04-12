@@ -41,9 +41,9 @@ export default function Login() {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen gap-4">
-      <h1 className="text-3xl font-bold text-[var(--text-h)]">FitFeed</h1>
-      <div className="flex flex-col gap-3 w-80">
+    <div className="flex flex-col items-center justify-center min-h-screen gap-4 px-4">
+      <h1 className="text-2xl sm:text-3xl font-bold text-[var(--text-h)]">FitFeed</h1>
+      <div className="flex flex-col gap-3 w-full max-w-sm">
         <input
           type="email"
           placeholder="Email"

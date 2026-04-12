@@ -1,8 +1,47 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { doc, updateDoc } from 'firebase/firestore';
+import { db } from '../../firebase';
 import { addPost } from '../FirebaseDB';
 import { CATEGORIES } from '../constants/categories';
+
+async function triggerAnalysis(postId: string, imageUrl: string): Promise<void> {
+  console.log('[triggerAnalysis] Starting for postId:', postId, 'imageUrl:', imageUrl);
+  try {
+    const response = await fetch('/api/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imageUrl }),
+    });
+
+    console.log('[triggerAnalysis] Response status:', response.status);
+
+    if (response.ok) {
+      const analysis = await response.json();
+      console.log('[triggerAnalysis] Analysis received:', analysis);
+
+      if (analysis.analyzed) {
+        await updateDoc(doc(db, 'posts', postId), {
+          palette: analysis.palette || [],
+          aesthetic: analysis.aesthetic || null,
+          aestheticTags: analysis.aestheticTags || [],
+          detectedItems: analysis.detectedItems || [],
+          styleDescription: analysis.styleDescription || null,
+          aestheticScores: analysis.aestheticScores || {},
+          analyzed: true,
+        });
+        console.log('[triggerAnalysis] Firestore updated successfully');
+      } else {
+        console.warn('[triggerAnalysis] analyzed=false, not writing to Firestore');
+      }
+    } else {
+      console.error('[triggerAnalysis] Bad response from /api/analyze:', response.status);
+    }
+  } catch (err) {
+    console.error('[triggerAnalysis] Failed:', err);
+  }
+}
 
 interface UploadProps {
   uid: string;
@@ -40,7 +79,7 @@ export default function Upload({ uid }: UploadProps) {
       await uploadBytes(storageRef, image);
       const imageUrl = await getDownloadURL(storageRef);
 
-      await addPost({
+      const result = await addPost({
         authorId: uid,
         content: caption,
         imageUrl,
@@ -52,6 +91,11 @@ export default function Upload({ uid }: UploadProps) {
       });
 
       navigate('/');
+
+      // Fire-and-forget: analyze outfit after redirect, never block the user
+      if (result) {
+        triggerAnalysis(result.id, imageUrl);
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to publish. Please try again.');
     } finally {
@@ -60,11 +104,11 @@ export default function Upload({ uid }: UploadProps) {
   };
 
   return (
-    <div className="max-w-lg mx-auto p-6">
+    <div className="max-w-lg mx-auto p-4 md:p-6">
       <h2 className="text-2xl font-bold text-[var(--text-h)] mb-6">Upload Fit</h2>
 
       <div className="flex flex-col gap-4">
-        <div className="border-2 border-dashed border-[var(--border)] rounded-lg p-6 text-center">
+        <div className="border-2 border-dashed border-[var(--border)] rounded-xl p-8 text-center cursor-pointer active:bg-[var(--accent-bg)] transition">
           {preview ? (
             <img src={preview} alt="preview" className="w-full aspect-square object-cover rounded-lg" />
           ) : (
@@ -83,13 +127,13 @@ export default function Upload({ uid }: UploadProps) {
           placeholder="Caption"
           value={caption}
           onChange={e => setCaption(e.target.value)}
-          className="border border-[var(--border)] rounded px-3 py-2 bg-[var(--bg)] text-[var(--text-h)] text-sm"
+          className="w-full border border-[var(--border)] rounded-lg px-3 py-3 bg-[var(--bg)] text-[var(--text-h)] text-base"
         />
 
         <select
           value={category}
           onChange={e => setCategory(e.target.value)}
-          className="border border-[var(--border)] rounded px-3 py-2 bg-[var(--bg)] text-[var(--text-h)] text-sm"
+          className="w-full border border-[var(--border)] rounded-lg px-3 py-3 bg-[var(--bg)] text-[var(--text-h)] text-base"
         >
           <option value="">Select a category</option>
           {CATEGORIES.map(cat => (
@@ -102,7 +146,7 @@ export default function Upload({ uid }: UploadProps) {
           value={outfitBreakdown}
           onChange={e => setOutfitBreakdown(e.target.value)}
           rows={3}
-          className="border border-[var(--border)] rounded px-3 py-2 bg-[var(--bg)] text-[var(--text-h)] text-sm resize-none"
+          className="w-full border border-[var(--border)] rounded-lg px-3 py-3 bg-[var(--bg)] text-[var(--text-h)] text-base resize-none"
         />
 
         {error && <p className="text-red-500 text-sm">{error}</p>}
@@ -110,9 +154,9 @@ export default function Upload({ uid }: UploadProps) {
         <button
           onClick={handlePublish}
           disabled={loading}
-          className="bg-[var(--accent)] text-white rounded px-4 py-2 font-medium hover:opacity-90 transition disabled:opacity-50"
+          className="w-full bg-[var(--accent)] text-white rounded-lg px-4 py-3 font-medium hover:opacity-90 transition disabled:opacity-50 text-base"
         >
-          {loading ? 'Publishing...' : 'Publish'}
+          {loading ? 'Saving your fit...' : 'Publish'}
         </button>
       </div>
     </div>

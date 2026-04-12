@@ -1,5 +1,18 @@
 @import "tailwindcss";
 
+* {
+  box-sizing: border-box;
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+input, textarea, select {
+  font-size: 16px; /* prevents iOS auto-zoom on focus */
+}
+
 :root {
   --text: #6b6375;
   --text-h: #08060d;
@@ -53,8 +66,8 @@
 }
 
 #root {
-  width: 1126px;
-  max-width: 100%;
+  width: 100%;
+  max-width: 1126px;
   margin: 0 auto;
   text-align: center;
   border-inline: 1px solid var(--border);
@@ -64,8 +77,16 @@
   box-sizing: border-box;
 }
 
+/* Remove border on mobile — full width looks better */
+@media (max-width: 768px) {
+  #root {
+    border-inline: none;
+  }
+}
+
 body {
   margin: 0;
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 h1,
@@ -110,4 +131,25 @@ code {
   line-height: 135%;
   padding: 4px 8px;
   background: var(--code-bg);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s ease-out forwards;
+}
+
+.safe-area-bottom {
+  padding-bottom: max(8px, env(safe-area-inset-bottom));
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
 }

@@ -3,6 +3,7 @@ import { getPosts, toggleLike, getUserPreferences } from '../FirebaseDB';
 import type { Post } from '../FirebaseDB';
 import { recordInteraction } from '../feedService';
 import { auth } from '../../firebase';
+import StyleProfile from '../components/StyleProfile';
 
 interface ProfileProps {
   uid: string;
@@ -10,7 +11,7 @@ interface ProfileProps {
 
 export default function Profile({ uid }: ProfileProps) {
   const [posts, setPosts] = useState<Post[]>([]);
-  const [topCategory, setTopCategory] = useState<string>('None yet');
+  const [userPreferences, setUserPreferences] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -20,10 +21,7 @@ export default function Profile({ uid }: ProfileProps) {
       setPosts(myPosts);
 
       const prefs = await getUserPreferences(uid);
-      if (Object.keys(prefs).length > 0) {
-        const top = Object.entries(prefs).sort((a, b) => b[1] - a[1])[0][0];
-        setTopCategory(top);
-      }
+      setUserPreferences(prefs);
 
       setLoading(false);
     };
@@ -54,19 +52,21 @@ export default function Profile({ uid }: ProfileProps) {
   if (loading) return <div className="p-8 text-center text-[var(--text)]">Loading profile...</div>;
 
   return (
-    <div className="max-w-2xl mx-auto p-6">
-      <div className="mb-6">
+    <div className="max-w-2xl mx-auto py-6 px-0 md:px-6">
+      <div className="px-4 md:px-0 mb-4">
         <h2 className="text-2xl font-bold text-[var(--text-h)]">My Profile</h2>
         <p className="text-[var(--text)] text-sm">{auth.currentUser?.email}</p>
-        <p className="text-[var(--text)] text-sm mt-1">
-          Top style: <span className="text-[var(--accent)] font-medium">{topCategory}</span>
-        </p>
+      </div>
+
+      {/* Style Profile */}
+      <div className="mb-6 px-4 md:px-0">
+        <StyleProfile preferences={userPreferences} />
       </div>
 
       {posts.length === 0 ? (
-        <p className="text-[var(--text)] text-sm">No posts yet. Upload your first fit!</p>
+        <p className="text-[var(--text)] text-sm px-4 md:px-0">No posts yet. Upload your first fit!</p>
       ) : (
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 gap-3 px-4 md:px-0">
           {posts.map(post => (
             <div key={post.id} className="border border-[var(--border)] rounded-lg overflow-hidden">
               {post.imageUrl && (

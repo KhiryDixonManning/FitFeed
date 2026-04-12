@@ -24,6 +24,13 @@ export interface Post {
     updatedAt?: string;
     outfitBreakdown?: string;
     likedBy?: string[];
+    palette?: string[];
+    aesthetic?: string;
+    aestheticTags?: string[];
+    detectedItems?: string[];
+    styleDescription?: string;
+    aestheticScores?: Record<string, number>;
+    analyzed?: boolean;
 }
 
 export interface Comment {
@@ -35,14 +42,14 @@ export interface Comment {
     createdAt: string;
 }
 
-export const addPost = async (post: Omit<Post, "id" | "createdAt">): Promise<DocumentReference | null> => {
+export const addPost = async (post: Omit<Post, "id" | "createdAt">): Promise<{ ref: DocumentReference; id: string } | null> => {
     try {
         const docRef = await addDoc(collection(db, "posts"), {
             ...post,
             createdAt: new Date(),
         });
         console.log("Post created with ID:", docRef.id);
-        return docRef;
+        return { ref: docRef, id: docRef.id };
     } catch (error: unknown) {
         if (error instanceof FirebaseError) {
             console.log(error.code);

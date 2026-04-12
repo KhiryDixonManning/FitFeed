@@ -51,14 +51,14 @@ export default function Leaderboard() {
   if (loading) return <div className="p-8 text-center text-[var(--text)]">Loading leaderboard...</div>;
 
   return (
-    <div className="max-w-2xl mx-auto p-6 text-left">
-      <h2 className="text-2xl font-bold text-[var(--text-h)] mb-4">Trending</h2>
+    <div className="max-w-2xl mx-auto py-6 text-left">
+      <h2 className="text-2xl font-bold text-[var(--text-h)] mb-4 px-4 md:px-0">Aura Farmers 🌾</h2>
 
-      {/* Category filter */}
-      <div className="flex gap-2 flex-wrap mb-6">
+      {/* Category filter — horizontal scroll on all sizes */}
+      <div className="flex gap-2 overflow-x-auto pb-2 mb-6 scrollbar-hide -mx-4 px-4 md:mx-0 md:px-0">
         <button
           onClick={() => setSelectedCategory('all')}
-          className={`px-3 py-1 rounded-full text-xs font-medium transition ${
+          className={`px-3 py-1 rounded-full text-xs font-medium transition shrink-0 ${
             selectedCategory === 'all'
               ? 'bg-[var(--accent)] text-white'
               : 'border border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)]'
@@ -70,7 +70,7 @@ export default function Leaderboard() {
           <button
             key={cat}
             onClick={() => setSelectedCategory(cat)}
-            className={`px-3 py-1 rounded-full text-xs font-medium capitalize transition ${
+            className={`px-3 py-1 rounded-full text-xs font-medium capitalize transition shrink-0 ${
               selectedCategory === cat
                 ? 'bg-[var(--accent)] text-white'
                 : 'border border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)]'
@@ -82,18 +82,18 @@ export default function Leaderboard() {
       </div>
 
       {filtered.length === 0 ? (
-        <p className="text-[var(--text)] text-sm">No posts in this category yet.</p>
+        <p className="text-[var(--text)] text-sm px-4 md:px-0">No posts in this category yet.</p>
       ) : (
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-3 px-4 md:px-0">
           {filtered.map((post, index) => {
             const engagement = (post.likesCount || 0) + (post.commentsCount || 0);
             return (
               <div
                 key={post.id}
-                className="flex gap-4 border border-[var(--border)] rounded-lg overflow-hidden bg-[var(--bg)]"
+                className="flex gap-3 border border-[var(--border)] rounded-xl overflow-hidden bg-[var(--bg)]"
               >
                 {/* Rank */}
-                <div className="flex items-center justify-center w-12 shrink-0 text-xl font-bold text-[var(--accent)]">
+                <div className="flex items-center justify-center w-10 text-lg font-bold text-[var(--accent)] shrink-0">
                   #{index + 1}
                 </div>
 
@@ -102,24 +102,20 @@ export default function Leaderboard() {
                   <img
                     src={post.imageUrl}
                     alt="outfit"
-                    className="w-20 h-20 object-cover shrink-0"
+                    className="w-16 h-16 sm:w-20 sm:h-20 object-cover shrink-0"
+                    loading="lazy"
                   />
                 )}
 
                 {/* Info */}
-                <div className="p-3 flex flex-col justify-center gap-1 min-w-0 flex-1">
+                <div className="p-2 flex flex-col justify-center gap-1 min-w-0 flex-1">
                   <p className="text-xs text-[var(--text)] truncate">
                     @{authorEmails[post.authorId] || post.authorId}
                   </p>
                   {post.content && (
                     <p className="text-sm text-[var(--text-h)] truncate">{post.content}</p>
                   )}
-                  {post.category && (
-                    <span className="text-xs bg-[var(--accent)] text-white rounded-full px-2 py-0.5 w-fit capitalize">
-                      {post.category}
-                    </span>
-                  )}
-                  <div className="flex gap-3 text-xs text-[var(--text)] mt-1">
+                  <div className="flex gap-2 text-xs text-[var(--text)] flex-wrap">
                     <span>❤️ {post.likesCount || 0}</span>
                     <span>💬 {post.commentsCount || 0}</span>
                     <span className="text-[var(--accent)] font-medium">Score: {engagement}</span>
