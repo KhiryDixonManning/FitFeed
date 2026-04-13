@@ -23,3 +23,32 @@ dist-ssr
 *.sln
 *.sw?
 screenshots/
+
+# Python
+python-backend/venv/
+__pycache__/
+*.pyc
+
+# Firebase
+.firebase/
+firebase-debug.log
+
+# Env
+.env
+.env.local
+backend/.env
+python-backend/.env
+*.env
+
+# Firebase service account — never commit this
+serviceAccountKey.json
+python-backend/serviceAccountKey.json
+**/serviceAccountKey.json
+
+# Env examples are safe to commit
+!.env.example
+fit-feed/python-backend/.env
+
+# Playwright
+test-results/
+playwright-report/
