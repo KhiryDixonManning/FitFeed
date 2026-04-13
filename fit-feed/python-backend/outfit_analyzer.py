@@ -81,7 +81,7 @@ def analyze_outfit_with_claude(image_url: str) -> dict:
 
         client = anthropic.Anthropic()
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-5",
             max_tokens=1000,
             messages=[
                 {
@@ -121,6 +121,12 @@ aestheticScores should be float values 0.0 to 1.0 showing how much each aestheti
         )
 
         raw = message.content[0].text.strip()
+        # Strip markdown code fences if Claude wrapped the JSON despite instructions
+        if raw.startswith("```"):
+            raw = raw.split("```", 2)[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.rsplit("```", 1)[0].strip()
         print(f"[claude] Raw response: {raw}")
         return json.loads(raw)
 

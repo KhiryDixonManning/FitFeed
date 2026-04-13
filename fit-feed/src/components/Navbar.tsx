@@ -4,7 +4,7 @@ import { logout } from '../Authentication';
 const navItems = [
   { path: '/',            label: 'Feed',    icon: '🏠' },
   { path: '/upload',      label: 'Upload',  icon: '➕' },
-  { path: '/leaderboard', label: 'Aura',    icon: '🏆' },
+  { path: '/leaderboard', label: 'Aura Farmers', icon: '🏆' },
   { path: '/profile',     label: 'Profile', icon: '👤' },
 ];
 

@@ -45,6 +45,10 @@ serviceAccountKey.json
 python-backend/serviceAccountKey.json
 **/serviceAccountKey.json
 
+# Env examples are safe to commit
+!.env.example
+fit-feed/python-backend/.env
+
 # Playwright
 test-results/
 playwright-report/
