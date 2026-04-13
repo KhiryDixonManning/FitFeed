@@ -65,6 +65,29 @@ export default function Upload({ uid }: UploadProps) {
     }
   };
 
+  const compressImage = (file: File, maxWidth = 1200, quality = 0.8): Promise<Blob> => {
+    return new Promise((resolve) => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d')!;
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+
+      img.onload = () => {
+        const ratio = Math.min(maxWidth / img.width, maxWidth / img.height, 1);
+        canvas.width = img.width * ratio;
+        canvas.height = img.height * ratio;
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(url);
+        canvas.toBlob(
+          (blob) => resolve(blob!),
+          'image/jpeg',
+          quality
+        );
+      };
+      img.src = url;
+    });
+  };
+
   const handlePublish = async () => {
     if (!image) { setError('Please select an image.'); return; }
     if (!category) { setError('Please select a category.'); return; }
@@ -75,8 +98,12 @@ export default function Upload({ uid }: UploadProps) {
 
     try {
       const storage = getStorage();
-      const storageRef = ref(storage, `posts/${uid}/${Date.now()}_${image.name}`);
-      await uploadBytes(storageRef, image);
+      const compressedBlob = await compressImage(image);
+      const compressedFile = new File([compressedBlob], image.name.replace(/\.[^.]+$/, '.jpg'), {
+        type: 'image/jpeg',
+      });
+      const storageRef = ref(storage, `posts/${uid}/${Date.now()}_${compressedFile.name}`);
+      await uploadBytes(storageRef, compressedFile);
       const imageUrl = await getDownloadURL(storageRef);
 
       const result = await addPost({
