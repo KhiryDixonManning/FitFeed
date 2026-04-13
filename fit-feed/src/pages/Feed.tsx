@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
-import { doc, getDoc, type Firestore } from "firebase/firestore";
+import { useState, useEffect, useRef } from "react";
+import { collection, onSnapshot, query, orderBy, doc, getDoc, type Firestore } from "firebase/firestore";
 import { db } from "../../firebase";
 import PostCard from "../components/PostCard";
-import { getRankedFeed, recordInteraction } from "../feedService";
-import { toggleLike, type Post } from "../FirebaseDB";
+import { recordInteraction } from "../feedService";
+import { toggleLike, getUserPreferences, type Post } from "../FirebaseDB";
 import { CATEGORIES } from "../constants/categories";
 
 const fetchAuthorEmails = async (posts: Post[], database: Firestore): Promise<Record<string, string>> => {
@@ -38,6 +38,7 @@ export default function Feed({ uid }: FeedProps) {
   const [authorEmails, setAuthorEmails] = useState<Record<string, string>>({});
   const [tab, setTab] = useState<'foryou' | 'discover'>('foryou');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const rankDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     fetch("/api/health")
@@ -46,15 +47,51 @@ export default function Feed({ uid }: FeedProps) {
   }, []);
 
   useEffect(() => {
-    const fetchFeed = async () => {
-      setLoading(true);
-      const ranked = await getRankedFeed(uid);
-      setPosts(ranked);
-      const emailMap = await fetchAuthorEmails(ranked, db);
-      setAuthorEmails(emailMap);
-      setLoading(false);
+    const postsRef = collection(db, 'posts');
+    const q = query(postsRef, orderBy('createdAt', 'desc'));
+
+    const unsubscribe = onSnapshot(q, async (snapshot) => {
+      const posts: Post[] = snapshot.docs.map(d => ({
+        id: d.id,
+        ...d.data(),
+        createdAt: d.data().createdAt?.toDate?.()?.toISOString() ?? new Date().toISOString(),
+      } as Post));
+
+      // Debounce ranking so rapid bursts of likes don't hammer Flask
+      if (rankDebounceRef.current) clearTimeout(rankDebounceRef.current);
+      rankDebounceRef.current = setTimeout(async () => {
+        try {
+          const userPreferences = await getUserPreferences(uid);
+          const response = await fetch('/api/rank', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ posts, userPreferences }),
+          });
+          if (response.ok) {
+            const ranked = await response.json();
+            setPosts(ranked);
+            const emails = await fetchAuthorEmails(ranked, db);
+            setAuthorEmails(prev => ({ ...prev, ...emails }));
+          } else {
+            setPosts(posts);
+            const emails = await fetchAuthorEmails(posts, db);
+            setAuthorEmails(prev => ({ ...prev, ...emails }));
+          }
+        } catch {
+          setPosts(posts);
+          const emails = await fetchAuthorEmails(posts, db);
+          setAuthorEmails(prev => ({ ...prev, ...emails }));
+        }
+
+        setLoading(false);
+      }, 500);
+    });
+
+    // Clean up listener and any pending debounce when component unmounts
+    return () => {
+      unsubscribe();
+      if (rankDebounceRef.current) clearTimeout(rankDebounceRef.current);
     };
-    fetchFeed();
   }, [uid]);
 
   const handleLike = async (post: Post) => {

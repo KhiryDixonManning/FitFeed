@@ -110,7 +110,15 @@ export default function PostCard({
         </div>
       )}
 
-      {/* Color palette — shows whenever palette exists even if full analysis failed */}
+      {/* Analyzing indicator — shows while analysis is pending */}
+      {!post.analyzed && !post.palette?.length && (
+        <div className="flex items-center gap-1 px-3 mt-2">
+          <div className="w-2 h-2 rounded-full bg-[var(--accent)] animate-pulse" />
+          <span className="text-xs text-[var(--text)] opacity-60">Analyzing outfit...</span>
+        </div>
+      )}
+
+      {/* Show palette as soon as it exists even before full analysis */}
       {post.palette && post.palette.length > 0 && (
         <div className="flex gap-1 px-3 mt-2">
           {post.palette.map((hex, i) => (
@@ -124,7 +132,7 @@ export default function PostCard({
         </div>
       )}
 
-      {/* Full analysis — only shows when Claude analysis succeeded */}
+      {/* Full analysis results */}
       {post.analyzed === true && (
         <div className="px-3 pt-1 flex flex-col gap-1">
           {post.aestheticTags && post.aestheticTags.length > 0 && (
@@ -139,19 +147,16 @@ export default function PostCard({
               ))}
             </div>
           )}
-
           {post.detectedItems && post.detectedItems.length > 0 && (
             <p className="text-xs text-[var(--text)] mt-1">
               {post.detectedItems.join(' · ')}
             </p>
           )}
-
           {post.styleDescription && (
             <p className="text-xs italic text-[var(--text)] mt-1">
               {post.styleDescription}
             </p>
           )}
-
           {post.aestheticScores && Object.keys(post.aestheticScores).length > 0 && (
             <div className="mt-2 flex flex-col gap-1">
               {Object.entries(post.aestheticScores)
@@ -160,18 +165,14 @@ export default function PostCard({
                 .slice(0, 3)
                 .map(([label, score]) => (
                   <div key={label} className="flex items-center gap-2">
-                    <span className="text-xs text-[var(--text)] w-24 capitalize">
-                      {label}
-                    </span>
+                    <span className="text-xs text-[var(--text)] w-24 capitalize">{label}</span>
                     <div className="flex-1 h-1.5 bg-[var(--border)] rounded-full overflow-hidden">
                       <div
-                        className="h-full bg-[var(--accent)] rounded-full"
+                        className="h-full bg-[var(--accent)] rounded-full transition-all duration-500"
                         style={{ width: `${Math.round(score * 100)}%` }}
                       />
                     </div>
-                    <span className="text-xs text-[var(--text)]">
-                      {Math.round(score * 100)}%
-                    </span>
+                    <span className="text-xs text-[var(--text)]">{Math.round(score * 100)}%</span>
                   </div>
                 ))}
             </div>
