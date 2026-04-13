@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
+import { doc, setDoc } from 'firebase/firestore';
 import { getPosts, toggleLike, getUserPreferences } from '../FirebaseDB';
 import type { Post } from '../FirebaseDB';
 import { recordInteraction } from '../feedService';
-import { auth } from '../../firebase';
+import { auth, db } from '../../firebase';
 import StyleProfile from '../components/StyleProfile';
 
 interface ProfileProps {
@@ -22,6 +23,16 @@ export default function Profile({ uid }: ProfileProps) {
 
       const prefs = await getUserPreferences(uid);
       setUserPreferences(prefs);
+
+      // Silently ensure current user has a users document (backfills older accounts)
+      if (auth.currentUser) {
+        setDoc(doc(db, 'users', auth.currentUser.uid), {
+          uid: auth.currentUser.uid,
+          email: auth.currentUser.email,
+          displayName: auth.currentUser.displayName || '',
+          createdAt: new Date().toISOString(),
+        }, { merge: true }).catch(console.error);
+      }
 
       setLoading(false);
     };

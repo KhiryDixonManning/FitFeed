@@ -38,6 +38,12 @@ firebase-debug.log
 .env.local
 backend/.env
 python-backend/.env
+*.env
+
+# Firebase service account — never commit this
+serviceAccountKey.json
+python-backend/serviceAccountKey.json
+**/serviceAccountKey.json
 
 # Playwright
 test-results/

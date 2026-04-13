@@ -1,10 +1,30 @@
 import { useState, useEffect } from "react";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, type Firestore } from "firebase/firestore";
 import { db } from "../../firebase";
 import PostCard from "../components/PostCard";
 import { getRankedFeed, recordInteraction } from "../feedService";
 import { toggleLike, type Post } from "../FirebaseDB";
 import { CATEGORIES } from "../constants/categories";
+
+const fetchAuthorEmails = async (posts: Post[], database: Firestore): Promise<Record<string, string>> => {
+  const emailMap: Record<string, string> = {};
+  await Promise.all(
+    posts.map(async (post) => {
+      if (!post.authorId || emailMap[post.authorId]) return;
+      try {
+        const userDoc = await getDoc(doc(database, 'users', post.authorId));
+        if (userDoc.exists() && userDoc.data().email) {
+          emailMap[post.authorId] = userDoc.data().email;
+        } else {
+          emailMap[post.authorId] = `user_${post.authorId.slice(0, 6)}`;
+        }
+      } catch {
+        emailMap[post.authorId] = `user_${post.authorId.slice(0, 6)}`;
+      }
+    })
+  );
+  return emailMap;
+};
 
 interface FeedProps {
   uid: string;
@@ -30,23 +50,7 @@ export default function Feed({ uid }: FeedProps) {
       setLoading(true);
       const ranked = await getRankedFeed(uid);
       setPosts(ranked);
-
-      // Batch-fetch author emails so posts show readable names instead of UIDs
-      const emailMap: Record<string, string> = {};
-      await Promise.all(
-        ranked.map(async (post) => {
-          if (!emailMap[post.authorId]) {
-            try {
-              const userDoc = await getDoc(doc(db, 'users', post.authorId));
-              emailMap[post.authorId] = userDoc.exists()
-                ? (userDoc.data().email || post.authorId)
-                : post.authorId;
-            } catch {
-              emailMap[post.authorId] = post.authorId;
-            }
-          }
-        })
-      );
+      const emailMap = await fetchAuthorEmails(ranked, db);
       setAuthorEmails(emailMap);
       setLoading(false);
     };

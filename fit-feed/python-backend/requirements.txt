@@ -7,3 +7,4 @@ Pillow
 scikit-learn
 numpy
 requests
+firebase-admin

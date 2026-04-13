@@ -25,11 +25,11 @@ export default function Leaderboard() {
           if (!emailMap[post.authorId]) {
             try {
               const userDoc = await getDoc(doc(db, 'users', post.authorId));
-              emailMap[post.authorId] = userDoc.exists()
-                ? (userDoc.data().email || post.authorId)
-                : post.authorId;
+              emailMap[post.authorId] = (userDoc.exists() && userDoc.data().email)
+                ? userDoc.data().email
+                : `user_${post.authorId.slice(0, 6)}`;
             } catch {
-              emailMap[post.authorId] = post.authorId;
+              emailMap[post.authorId] = `user_${post.authorId.slice(0, 6)}`;
             }
           }
         })

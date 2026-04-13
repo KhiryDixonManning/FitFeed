@@ -67,7 +67,7 @@ export default function PublicProfile() {
   return (
     <div className="max-w-2xl mx-auto py-6 text-left">
       <div className="px-4 md:px-0 mb-6">
-        <h2 className="text-2xl font-bold text-[var(--text-h)]">@{email || uid}</h2>
+        <h2 className="text-2xl font-bold text-[var(--text-h)]">@{email || `user_${uid!.slice(0, 6)}`}</h2>
         <p className="text-[var(--text)] text-sm mt-1">
           Top style: <span className="text-[var(--accent)] font-medium">{topCategory}</span>
         </p>

@@ -110,15 +110,6 @@ export default function PostCard({
         </div>
       )}
 
-      {/* Temporary debug — remove before demo */}
-      {import.meta.env.DEV && (
-        <p className="text-xs text-red-400 px-3 pt-1">
-          analyzed: {String(post.analyzed)} |
-          palette: {post.palette?.length || 0} |
-          tags: {post.aestheticTags?.length || 0}
-        </p>
-      )}
-
       {/* Color palette — shows whenever palette exists even if full analysis failed */}
       {post.palette && post.palette.length > 0 && (
         <div className="flex gap-1 px-3 mt-2">
