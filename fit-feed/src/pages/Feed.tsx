@@ -143,7 +143,7 @@ export default function Feed({ uid }: FeedProps) {
     : tabPosts.filter(p => p.category === selectedCategory);
 
   return (
-    <div className="min-h-screen bg-[var(--bg)]">
+    <div className="min-h-screen bg-[var(--bg)] pb-24 md:pb-6">
       {!apiOnline && (
         <div className="bg-yellow-100 text-yellow-800 text-sm px-4 py-2 text-center">
           Ranking server is offline — showing unranked posts

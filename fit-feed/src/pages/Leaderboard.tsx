@@ -51,7 +51,7 @@ export default function Leaderboard() {
   if (loading) return <div className="p-8 text-center text-[var(--text)]">Loading leaderboard...</div>;
 
   return (
-    <div className="max-w-2xl mx-auto py-6 text-left">
+    <div className="max-w-2xl mx-auto py-6 text-left pb-24 md:pb-6">
       <h2 className="text-2xl font-bold text-[var(--text-h)] mb-4 px-4 md:px-0">Aura Farmers 🌾</h2>
 
       {/* Category filter — horizontal scroll on all sizes */}

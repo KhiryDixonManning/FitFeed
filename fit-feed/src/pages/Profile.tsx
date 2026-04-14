@@ -63,7 +63,7 @@ export default function Profile({ uid }: ProfileProps) {
   if (loading) return <div className="p-8 text-center text-[var(--text)]">Loading profile...</div>;
 
   return (
-    <div className="max-w-2xl mx-auto py-6 px-0 md:px-6">
+    <div className="max-w-2xl mx-auto py-6 px-0 md:px-6 pb-24 md:pb-6">
       <div className="px-4 md:px-0 mb-4">
         <h2 className="text-2xl font-bold text-[var(--text-h)]">My Profile</h2>
         <p className="text-[var(--text)] text-sm">{auth.currentUser?.email}</p>
