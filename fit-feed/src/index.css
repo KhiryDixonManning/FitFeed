@@ -154,6 +154,16 @@ code {
   padding-bottom: max(8px, env(safe-area-inset-bottom));
 }
 
+.bottom-safe-nav {
+  bottom: calc(64px + env(safe-area-inset-bottom));
+}
+
+@media (min-width: 768px) {
+  .bottom-safe-nav {
+    bottom: auto;
+  }
+}
+
 .scrollbar-hide {
   -ms-overflow-style: none;
   scrollbar-width: none;

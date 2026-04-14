@@ -65,7 +65,7 @@ export default function Navbar() {
       </nav>
 
       {/* Spacer so content is not hidden behind mobile bottom bar */}
-      <div className="md:hidden h-16" />
+      <div className="md:hidden" style={{ height: 'calc(64px + env(safe-area-inset-bottom))' }} />
     </>
   );
 }

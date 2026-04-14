@@ -180,7 +180,7 @@ export default function Upload({ uid }: UploadProps) {
       </div>
 
       {/* Sticky publish button on mobile, inline on desktop */}
-      <div className="fixed bottom-16 left-0 right-0 px-4 pb-2 bg-[var(--bg)] border-t border-[var(--border)] md:relative md:bottom-auto md:left-auto md:right-auto md:px-0 md:pb-0 md:bg-transparent md:border-none z-40">
+      <div className="fixed left-0 right-0 px-4 pt-2 bg-[var(--bg)] border-t border-[var(--border)] md:relative md:left-auto md:right-auto md:px-0 md:pt-0 md:bg-transparent md:border-none z-40 bottom-safe-nav">
         <div className="max-w-lg mx-auto">
           {error && <p className="text-red-500 text-sm mb-2">{error}</p>}
           <button
