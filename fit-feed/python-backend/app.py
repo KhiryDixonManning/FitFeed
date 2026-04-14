@@ -6,13 +6,18 @@ from recommendation_engine import rank_posts, get_trending
 from outfit_analyzer import analyze_post
 from dotenv import load_dotenv
 import firebase_admin
-from firebase_admin import credentials, firestore as fb_firestore
+from firebase_admin import credentials, firestore as fb_firestore, initialize_app
 import os
+import json
 
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)  # allows frontend to connect
+CORS(app, origins=[
+    "http://localhost:5173",
+    "https://fitfeed-67ee8.web.app",
+    "https://fitfeed-67ee8.firebaseapp.com",
+])
 
 
 @app.route("/")
@@ -59,14 +64,34 @@ def analyze():
     return jsonify(result)
 
 
+def init_firebase_admin():
+    if firebase_admin._apps:
+        return
+
+    # Try environment variable first (Railway/production)
+    creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+    if creds_json:
+        cred_dict = json.loads(creds_json)
+        cred = credentials.Certificate(cred_dict)
+        initialize_app(cred)
+        print("[firebase-admin] Initialized from environment variable")
+        return
+
+    # Fall back to local file (development)
+    cred_path = os.path.join(os.path.dirname(__file__), "serviceAccountKey.json")
+    if os.path.exists(cred_path):
+        cred = credentials.Certificate(cred_path)
+        initialize_app(cred)
+        print("[firebase-admin] Initialized from local file")
+        return
+
+    raise Exception("No Firebase credentials found. Set GOOGLE_CREDENTIALS_JSON env var or provide serviceAccountKey.json")
+
+
 @app.route("/reanalyze-all", methods=["POST"])
 def reanalyze_all():
     try:
-        # Initialize Firebase Admin if not already initialized
-        if not firebase_admin._apps:
-            cred_path = os.path.join(os.path.dirname(__file__), "serviceAccountKey.json")
-            cred = credentials.Certificate(cred_path)
-            firebase_admin.initialize_app(cred)
+        init_firebase_admin()
 
         db = fb_firestore.client()
         posts_ref = db.collection("posts")
@@ -120,4 +145,5 @@ def health():
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)

@@ -5,6 +5,7 @@ import PostCard from "../components/PostCard";
 import { recordInteraction } from "../feedService";
 import { toggleLike, getUserPreferences, type Post } from "../FirebaseDB";
 import { CATEGORIES } from "../constants/categories";
+import { PYTHON_API } from '../config';
 
 const fetchAuthorEmails = async (posts: Post[], database: Firestore): Promise<Record<string, string>> => {
   const emailMap: Record<string, string> = {};
@@ -41,7 +42,7 @@ export default function Feed({ uid }: FeedProps) {
   const rankDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    fetch("/api/health")
+    fetch(`${PYTHON_API}/health`)
       .then(res => { if (!res.ok) setApiOnline(false); })
       .catch(() => setApiOnline(false));
   }, []);
@@ -62,7 +63,7 @@ export default function Feed({ uid }: FeedProps) {
       rankDebounceRef.current = setTimeout(async () => {
         try {
           const userPreferences = await getUserPreferences(uid);
-          const response = await fetch('/api/rank', {
+          const response = await fetch(`${PYTHON_API}/rank`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ posts, userPreferences }),

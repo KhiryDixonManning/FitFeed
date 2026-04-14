@@ -8,3 +8,4 @@ scikit-learn
 numpy
 requests
 firebase-admin
+gunicorn
