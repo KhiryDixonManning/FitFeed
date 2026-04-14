@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(export PATH=\"/c/Program Files/nodejs:/c/Users/Admin/AppData/Roaming/npm:$PATH\")",
-      "Bash(railway status:*)"
-    ]
-  }
-}
