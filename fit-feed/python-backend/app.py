@@ -92,47 +92,60 @@ def init_firebase_admin():
 def reanalyze_all():
     try:
         init_firebase_admin()
-
         db = fb_firestore.client()
         posts_ref = db.collection("posts")
-
-        # Get all posts that have not been analyzed yet
-        posts = posts_ref.where("analyzed", "!=", True).stream()
+        all_posts = list(posts_ref.stream())
 
         updated = 0
         failed = 0
+        skipped = 0
 
-        for post_doc in posts:
+        for post_doc in all_posts:
             post_data = post_doc.to_dict()
             image_url = post_data.get("imageUrl")
 
             if not image_url:
+                skipped += 1
                 continue
 
-            print(f"[reanalyze] Processing post {post_doc.id}")
+            # Check if palette is old string format
+            palette = post_data.get("palette", [])
+            has_old_palette = (
+                len(palette) > 0 and isinstance(palette[0], str)
+            )
+
+            # Reanalyze if not analyzed OR if palette is old string format
+            needs_analysis = not post_data.get("analyzed") or has_old_palette
+
+            if not needs_analysis:
+                skipped += 1
+                continue
+
+            print(f"[reanalyze] Processing post {post_doc.id} (old_palette={has_old_palette})")
             result = analyze_post(image_url)
 
             if result.get("analyzed"):
                 post_doc.reference.update({
                     "palette": result["palette"],
-                    "aesthetic": result["aesthetic"],
-                    "aestheticTags": result["aestheticTags"],
-                    "detectedItems": result["detectedItems"],
-                    "styleDescription": result["styleDescription"],
+                    "aesthetic": result.get("aesthetic"),
+                    "aestheticTags": result.get("aestheticTags", []),
+                    "detectedItems": result.get("detectedItems", []),
+                    "styleDescription": result.get("styleDescription"),
                     "styleNotes": result.get("styleNotes"),
-                    "aestheticScores": result["aestheticScores"],
+                    "aestheticScores": result.get("aestheticScores", {}),
                     "analyzed": True,
                 })
                 print(f"[reanalyze] Updated post {post_doc.id}")
                 updated += 1
             else:
-                print(f"[reanalyze] Failed to analyze post {post_doc.id}")
+                print(f"[reanalyze] Failed post {post_doc.id}")
                 failed += 1
 
         return jsonify({
             "message": "Reanalysis complete",
             "updated": updated,
-            "failed": failed
+            "failed": failed,
+            "skipped": skipped,
         })
 
     except Exception as e:

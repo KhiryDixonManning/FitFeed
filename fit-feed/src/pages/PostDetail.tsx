@@ -5,13 +5,41 @@ import { db, auth } from '../../firebase';
 import { type Post, toggleLike, getComments, addComment, type Comment } from '../FirebaseDB';
 import { recordInteraction } from '../feedService';
 
+const hexToReadableName = (hex: string): string => {
+  if (!hex) return 'Unknown';
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+
+  if (r > 200 && g < 100 && b < 100) return 'Red';
+  if (r < 100 && g > 150 && b < 100) return 'Green';
+  if (r < 100 && g < 100 && b > 200) return 'Blue';
+  if (r > 200 && g > 150 && b < 100) return 'Orange';
+  if (r > 200 && g > 200 && b < 100) return 'Yellow';
+  if (r > 150 && g < 100 && b > 150) return 'Purple';
+  if (r > 180 && g < 120 && b > 120) return 'Rose';
+  if (r > 150 && g > 100 && b < 80) return 'Camel';
+  if (r < 80 && g < 80 && b < 80) return 'Black';
+  if (brightness > 220) return 'White';
+  if (brightness > 180) return 'Cream';
+  if (brightness > 150) return 'Light Gray';
+  if (brightness > 100) return 'Gray';
+  if (brightness > 50) return 'Charcoal';
+  return 'Dark';
+};
+
 const normalizeColor = (color: any): { hex: string; name: string; percentage: number | null } => {
   if (typeof color === 'string') {
-    return { hex: color, name: color, percentage: null };
+    return {
+      hex: color,
+      name: hexToReadableName(color),
+      percentage: null,
+    };
   }
   return {
     hex: color.hex || '#000000',
-    name: color.name || color.hex || 'Unknown',
+    name: color.name || hexToReadableName(color.hex) || 'Unknown',
     percentage: color.percentage ?? null,
   };
 };
