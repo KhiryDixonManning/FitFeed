@@ -2,10 +2,11 @@ import { Link, useLocation } from 'react-router-dom';
 import { logout } from '../Authentication';
 
 const navItems = [
-  { path: '/',            label: 'Feed',    icon: '🏠' },
-  { path: '/upload',      label: 'Upload',  icon: '➕' },
-  { path: '/leaderboard', label: 'Aura Farmers', icon: '🏆' },
-  { path: '/profile',     label: 'Profile', icon: '👤' },
+  { path: '/',            label: 'Feed',         icon: '🏠' },
+  { path: '/upload',      label: 'Upload',        icon: '➕' },
+  { path: '/leaderboard', label: 'Aura Farmers',  icon: '🏆' },
+  { path: '/insights',    label: 'Insights',      icon: '📊' },
+  { path: '/profile',     label: 'Profile',       icon: '👤' },
 ];
 
 export default function Navbar() {

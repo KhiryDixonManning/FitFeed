@@ -119,6 +119,7 @@ def reanalyze_all():
                     "aestheticTags": result["aestheticTags"],
                     "detectedItems": result["detectedItems"],
                     "styleDescription": result["styleDescription"],
+                    "styleNotes": result.get("styleNotes"),
                     "aestheticScores": result["aestheticScores"],
                     "analyzed": True,
                 })

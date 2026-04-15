@@ -24,11 +24,12 @@ export interface Post {
     updatedAt?: string;
     outfitBreakdown?: string;
     likedBy?: string[];
-    palette?: string[];
+    palette?: (string | { hex: string; name: string; percentage: number })[];
     aesthetic?: string;
     aestheticTags?: string[];
     detectedItems?: string[];
     styleDescription?: string;
+    styleNotes?: string;
     aestheticScores?: Record<string, number>;
     analyzed?: boolean;
 }

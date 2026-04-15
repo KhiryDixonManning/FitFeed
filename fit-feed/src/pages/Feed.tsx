@@ -7,11 +7,11 @@ import { toggleLike, getUserPreferences, type Post } from "../FirebaseDB";
 import { CATEGORIES } from "../constants/categories";
 import { PYTHON_API } from '../config';
 
-const fetchAuthorEmails = async (posts: Post[], database: Firestore): Promise<Record<string, string>> => {
+const fetchAuthorEmails = async (posts: Post[], database: Firestore, existingEmails: Record<string, string> = {}): Promise<Record<string, string>> => {
   const emailMap: Record<string, string> = {};
   await Promise.all(
     posts.map(async (post) => {
-      if (!post.authorId || emailMap[post.authorId]) return;
+      if (!post.authorId || existingEmails[post.authorId] || emailMap[post.authorId]) return;
       try {
         const userDoc = await getDoc(doc(database, 'users', post.authorId));
         if (userDoc.exists() && userDoc.data().email) {
@@ -40,6 +40,12 @@ export default function Feed({ uid }: FeedProps) {
   const [tab, setTab] = useState<'foryou' | 'discover'>('foryou');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const rankDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const authorEmailsRef = useRef<Record<string, string>>({});
+
+  // Keep ref in sync with state so callbacks always see the latest cache
+  useEffect(() => {
+    authorEmailsRef.current = authorEmails;
+  }, [authorEmails]);
 
   useEffect(() => {
     fetch(`${PYTHON_API}/health`)
@@ -71,16 +77,16 @@ export default function Feed({ uid }: FeedProps) {
           if (response.ok) {
             const ranked = await response.json();
             setPosts(ranked);
-            const emails = await fetchAuthorEmails(ranked, db);
+            const emails = await fetchAuthorEmails(ranked, db, authorEmailsRef.current);
             setAuthorEmails(prev => ({ ...prev, ...emails }));
           } else {
             setPosts(posts);
-            const emails = await fetchAuthorEmails(posts, db);
+            const emails = await fetchAuthorEmails(posts, db, authorEmailsRef.current);
             setAuthorEmails(prev => ({ ...prev, ...emails }));
           }
         } catch {
           setPosts(posts);
-          const emails = await fetchAuthorEmails(posts, db);
+          const emails = await fetchAuthorEmails(posts, db, authorEmailsRef.current);
           setAuthorEmails(prev => ({ ...prev, ...emails }));
         }
 

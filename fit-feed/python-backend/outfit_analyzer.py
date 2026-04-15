@@ -25,18 +25,14 @@ else:
     print(f"ANTHROPIC_API_KEY loaded: {api_key[:8]}...")
 
 
-def extract_color_palette(image_url: str, n_colors: int = 5) -> list:
+def extract_color_palette_from_bytes(image_bytes: bytes, n_colors: int = 5) -> list:
     """
-    Downloads image and extracts dominant colors using KMeans clustering.
+    Extracts dominant colors from raw image bytes using KMeans clustering.
     Returns list of hex color strings.
     Falls back to empty list on any error.
     """
     try:
-        response = requests.get(image_url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
-        response.raise_for_status()
-        img = Image.open(BytesIO(response.content)).convert("RGB")
-
-        # Resize for speed
+        img = Image.open(BytesIO(image_bytes)).convert("RGB")
         img = img.resize((150, 150))
         pixels = np.array(img).reshape(-1, 3)
 
@@ -55,34 +51,33 @@ def extract_color_palette(image_url: str, n_colors: int = 5) -> list:
         return []
 
 
-def analyze_outfit_with_claude(image_url: str) -> dict:
+def analyze_outfit_with_claude_bytes(image_bytes: bytes) -> dict:
     """
-    Downloads image and sends to Claude API as base64.
-    This bypasses Firebase Storage auth requirements.
+    Sends raw image bytes to Claude API as base64.
+    Resizes and compresses before sending to reduce payload size.
     Returns structured metadata dict. Falls back to empty dict on any error.
     """
     try:
-        # Download image first and convert to base64
-        # This bypasses Firebase Storage auth requirements
-        img_response = requests.get(image_url, timeout=10, headers={
-            'User-Agent': 'Mozilla/5.0'
-        })
-        img_response.raise_for_status()
-        image_data = base64.standard_b64encode(img_response.content).decode("utf-8")
+        # Resize and compress before sending to Claude
+        img = Image.open(BytesIO(image_bytes)).convert("RGB")
+        max_size = 1024
+        ratio = min(max_size / img.width, max_size / img.height, 1.0)
+        if ratio < 1.0:
+            new_size = (int(img.width * ratio), int(img.height * ratio))
+            img = img.resize(new_size, Image.LANCZOS)
 
-        # Detect media type from response headers
-        content_type = img_response.headers.get('Content-Type', 'image/jpeg')
-        if 'png' in content_type:
-            media_type = 'image/png'
-        elif 'webp' in content_type:
-            media_type = 'image/webp'
-        else:
-            media_type = 'image/jpeg'
+        buffer = BytesIO()
+        img.save(buffer, format="JPEG", quality=85)
+        buffer.seek(0)
+        image_data = base64.standard_b64encode(buffer.read()).decode("utf-8")
+        media_type = "image/jpeg"
+
+        print(f"[claude] Image prepared, base64 size: {len(image_data)} chars")
 
         client = anthropic.Anthropic()
         message = client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=1000,
+            model="claude-sonnet-4-20250514",
+            max_tokens=1024,
             messages=[
                 {
                     "role": "user",
@@ -103,17 +98,21 @@ def analyze_outfit_with_claude(image_url: str) -> dict:
   "aestheticTags": ["tag1", "tag2", "tag3"],
   "detectedItems": ["item1", "item2", "item3"],
   "styleDescription": "Exactly 2 sentences describing this look and how to articulate it.",
+  "styleNotes": "3-4 sentences of deeper analysis about the aesthetic composition, cultural references, and what makes this outfit work. Be specific and insightful like a fashion editor.",
   "aestheticScores": {
     "streetwear": 0.0,
     "vintage": 0.0,
     "minimalist": 0.0,
     "y2k": 0.0,
     "alternative": 0.0
-  }
+  },
+  "colors": [
+    {"hex": "#1A1A1A", "name": "Metropolis", "percentage": 61},
+    {"hex": "#D0312D", "name": "Red", "percentage": 25},
+    {"hex": "#FFFFFF", "name": "White", "percentage": 7}
+  ]
 }
-aestheticTags should be 3 descriptive style words like oversized, monochrome, layered.
-detectedItems should list the visible clothing pieces like white tee, baggy jeans, chunky sneakers.
-aestheticScores should be float values 0.0 to 1.0 showing how much each aesthetic applies."""
+For colors: provide exactly 3 dominant colors with a creative fashion-forward name (like Metropolis, Ivory, Slate, Rust, Sage — not just basic color names), the hex code, and percentage of the outfit that color occupies."""
                         }
                     ],
                 }
@@ -140,7 +139,8 @@ aestheticScores should be float values 0.0 to 1.0 showing how much each aestheti
 
 def analyze_post(image_url: str) -> dict:
     """
-    Main entry point. Runs color extraction and Claude analysis.
+    Main entry point. Downloads image ONCE and reuses bytes for both
+    KMeans color extraction (fallback) and Claude analysis.
     Always returns a dict. Never raises an exception.
     """
     print(f"[analyze_post] Starting analysis for: {image_url}")
@@ -151,30 +151,47 @@ def analyze_post(image_url: str) -> dict:
         "aestheticTags": [],
         "detectedItems": [],
         "styleDescription": None,
+        "styleNotes": None,
         "aestheticScores": {},
         "analyzed": False,
     }
 
     try:
-        print("[analyze_post] Extracting color palette...")
-        palette = extract_color_palette(image_url)
-        print(f"[analyze_post] Palette extracted: {palette}")
-        result["palette"] = palette
+        # Download image ONCE and reuse for both KMeans and Claude
+        print("[analyze_post] Downloading image...")
+        img_response = requests.get(image_url, timeout=10, headers={
+            'User-Agent': 'Mozilla/5.0'
+        })
+        img_response.raise_for_status()
+        image_bytes = img_response.content
+        print(f"[analyze_post] Image downloaded: {len(image_bytes)} bytes")
 
+        # Run KMeans on downloaded bytes as fallback palette
+        print("[analyze_post] Extracting KMeans palette...")
+        kmeans_palette = extract_color_palette_from_bytes(image_bytes)
+        print(f"[analyze_post] KMeans palette: {kmeans_palette}")
+
+        # Run Claude analysis using the same downloaded bytes
         print("[analyze_post] Calling Claude API...")
-        claude_result = analyze_outfit_with_claude(image_url)
+        claude_result = analyze_outfit_with_claude_bytes(image_bytes)
         print(f"[analyze_post] Claude result: {claude_result}")
 
         if claude_result:
+            # Use Claude colors if available (richer format with names and percentages)
+            # Fall back to KMeans palette if Claude didn't return colors
+            result["palette"] = claude_result.get("colors", kmeans_palette)
             result["aesthetic"] = claude_result.get("aesthetic")
             result["aestheticTags"] = claude_result.get("aestheticTags", [])
             result["detectedItems"] = claude_result.get("detectedItems", [])
             result["styleDescription"] = claude_result.get("styleDescription")
+            result["styleNotes"] = claude_result.get("styleNotes")
             result["aestheticScores"] = claude_result.get("aestheticScores", {})
             result["analyzed"] = True
             print("[analyze_post] Analysis complete and analyzed=True")
         else:
-            print("[analyze_post] Claude returned empty result")
+            # Fall back to KMeans palette only
+            result["palette"] = kmeans_palette
+            print("[analyze_post] Claude failed, using KMeans palette only")
 
     except Exception as e:
         print(f"[analyze_post] FAILED: {e}")

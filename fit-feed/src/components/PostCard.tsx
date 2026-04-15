@@ -5,6 +5,17 @@ import { addComment, getComments, type Comment, type Post } from '../FirebaseDB'
 import { recordInteraction } from '../feedService';
 import ProfileAvatar from './ProfileAvatar';
 
+const normalizeColor = (color: any): { hex: string; name: string; percentage: number | null } => {
+  if (typeof color === 'string') {
+    return { hex: color, name: color, percentage: null };
+  }
+  return {
+    hex: color.hex || '#000000',
+    name: color.name || color.hex || 'Unknown',
+    percentage: color.percentage ?? null,
+  };
+};
+
 interface PostCardProps {
   post: Post;
   uid: string;
@@ -61,10 +72,10 @@ export default function PostCard({
 
   return (
     <div className="rounded-2xl shadow-lg bg-white overflow-hidden flex flex-col">
-      {/* Image — tapping navigates to author profile */}
+      {/* Image — tapping navigates to post detail */}
       <div
-        className="overflow-hidden cursor-pointer bg-gray-100"
-        onClick={() => navigate(`/profile/${post.authorId}`)}
+        className="overflow-hidden cursor-pointer bg-gray-100 relative"
+        onClick={() => navigate(`/post/${post.id}`)}
       >
         {post.imageUrl ? (
           <img
@@ -76,6 +87,21 @@ export default function PostCard({
         ) : (
           <div className="w-full aspect-square flex items-center justify-center text-gray-400 text-sm">
             No image
+          </div>
+        )}
+        {/* Aura Score Badge */}
+        <div className="absolute top-2 right-2 bg-black/80 backdrop-blur-sm rounded-full px-2 py-1 flex items-center gap-1">
+          <span className="text-white text-xs">◎</span>
+          <span className="text-white text-xs font-semibold">
+            {(post.likesCount || 0) + (post.commentsCount || 0)}
+          </span>
+        </div>
+        {/* Category badge bottom left */}
+        {post.category && (
+          <div className="absolute bottom-2 left-2">
+            <span className="bg-black/70 backdrop-blur-sm text-white text-xs rounded-full px-2 py-1 capitalize">
+              {post.category}
+            </span>
           </div>
         )}
       </div>
@@ -118,17 +144,40 @@ export default function PostCard({
         </div>
       )}
 
-      {/* Show palette as soon as it exists even before full analysis */}
+      {/* Color Palette Cards */}
       {post.palette && post.palette.length > 0 && (
-        <div className="flex gap-1 px-3 mt-2">
-          {post.palette.map((hex, i) => (
-            <div
-              key={i}
-              className="w-5 h-5 rounded-full border border-[var(--border)]"
-              style={{ backgroundColor: hex }}
-              title={hex}
-            />
-          ))}
+        <div className="flex gap-2 mt-3">
+          {post.palette.map((color, i) => {
+            const c = normalizeColor(color);
+            const isLight = c.hex === '#FFFFFF' || c.hex === '#ffffff' ||
+              (parseInt(c.hex.slice(1, 3), 16) > 200 &&
+               parseInt(c.hex.slice(3, 5), 16) > 200 &&
+               parseInt(c.hex.slice(5, 7), 16) > 200);
+            const textColor = isLight ? '#000000' : '#ffffff';
+            return (
+              <div
+                key={i}
+                className="flex-1 rounded-xl overflow-hidden"
+                style={{ backgroundColor: c.hex, minHeight: '72px' }}
+              >
+                <div className="flex flex-col justify-between p-2 min-h-[72px]">
+                  {c.percentage !== null && (
+                    <span className="text-xs font-semibold" style={{ color: textColor }}>
+                      {c.percentage}%
+                    </span>
+                  )}
+                  <div>
+                    <p className="text-xs font-medium leading-tight" style={{ color: textColor }}>
+                      {c.name}
+                    </p>
+                    <p className="text-xs opacity-60" style={{ color: textColor }}>
+                      {c.hex}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -175,6 +224,12 @@ export default function PostCard({
                     <span className="text-xs text-[var(--text)]">{Math.round(score * 100)}%</span>
                   </div>
                 ))}
+            </div>
+          )}
+          {post.styleNotes && (
+            <div className="mt-3 p-3 rounded-xl bg-[var(--code-bg)]">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text)] mb-1">Notes on Composition</p>
+              <p className="text-xs text-[var(--text)] leading-relaxed">{post.styleNotes}</p>
             </div>
           )}
         </div>
