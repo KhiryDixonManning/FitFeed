@@ -156,7 +156,7 @@ export default function Feed({ uid }: FeedProps) {
         </div>
       )}
 
-      <div className="pt-4">
+      <div className="pt-4 max-w-7xl mx-auto">
         {/* For You / Discover toggle */}
         <div className="flex gap-2 px-4 md:px-6 mb-4">
           <button
@@ -216,18 +216,19 @@ export default function Feed({ uid }: FeedProps) {
             {posts.length === 0 ? 'No posts yet. Be the first to share a fit!' : 'No posts in this category yet.'}
           </div>
         ) : (
-          <div className="flex flex-col gap-4 px-4 md:px-6">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 md:gap-6 px-4 md:px-6">
             {visiblePosts.map((post) => (
-              <PostCard
-                key={post.id}
-                post={post}
-                uid={uid}
-                authorEmail={authorEmails[post.authorId] || post.authorId}
-                isLiked={post.likedBy?.includes(uid) ?? false}
-                onLike={() => handleLike(post)}
-                liking={likingIds.has(post.id)}
-                onCommentAdded={handleCommentAdded}
-              />
+              <div key={post.id} className="w-full max-w-2xl mx-auto">
+                <PostCard
+                  post={post}
+                  uid={uid}
+                  authorEmail={authorEmails[post.authorId] || post.authorId}
+                  isLiked={post.likedBy?.includes(uid) ?? false}
+                  onLike={() => handleLike(post)}
+                  liking={likingIds.has(post.id)}
+                  onCommentAdded={handleCommentAdded}
+                />
+              </div>
             ))}
           </div>
         )}
