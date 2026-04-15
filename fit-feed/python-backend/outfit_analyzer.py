@@ -28,11 +28,21 @@ else:
 def extract_color_palette_from_bytes(image_bytes: bytes, n_colors: int = 5) -> list:
     """
     Extracts dominant colors from raw image bytes using KMeans clustering.
+    Crops to center 60% of the image to focus on the outfit, not background.
     Returns list of hex color strings.
     Falls back to empty list on any error.
     """
     try:
         img = Image.open(BytesIO(image_bytes)).convert("RGB")
+
+        # Crop to center 60% of image to focus on outfit, not background
+        width, height = img.size
+        left = int(width * 0.2)
+        top = int(height * 0.1)
+        right = int(width * 0.8)
+        bottom = int(height * 0.9)
+        img = img.crop((left, top, right, bottom))
+
         img = img.resize((150, 150))
         pixels = np.array(img).reshape(-1, 3)
 
@@ -112,7 +122,7 @@ def analyze_outfit_with_claude_bytes(image_bytes: bytes) -> dict:
     {"hex": "#FFFFFF", "name": "White", "percentage": 7}
   ]
 }
-For colors: provide exactly 3 dominant colors with a creative fashion-forward name (like Metropolis, Ivory, Slate, Rust, Sage — not just basic color names), the hex code, and percentage of the outfit that color occupies."""
+For colors: analyze ONLY the clothing and accessories being worn. Ignore background walls, floors, mirrors, furniture, and objects not being worn. Provide exactly 3 dominant colors from the outfit itself with a creative fashion-forward name (like Metropolis, Ivory, Slate, Rust, Sage, Camel, Cobalt — not just basic color names), the hex code, and the percentage of the OUTFIT (not the whole image) that color occupies."""
                         }
                     ],
                 }

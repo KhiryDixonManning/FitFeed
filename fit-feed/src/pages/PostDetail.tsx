@@ -5,6 +5,77 @@ import { db, auth } from '../../firebase';
 import { type Post, toggleLike, getComments, addComment, type Comment } from '../FirebaseDB';
 import { recordInteraction } from '../feedService';
 
+const getStoreSuggestions = (aesthetic: string) => {
+  const stores: Record<string, { name: string; url: string; description: string }[]> = {
+    streetwear: [
+      { name: 'ASOS', url: 'https://asos.com', description: 'Trendy streetwear basics' },
+      { name: 'Urban Outfitters', url: 'https://urbanoutfitters.com', description: 'Street and skate styles' },
+      { name: 'Depop', url: 'https://depop.com', description: 'Thrifted streetwear finds' },
+    ],
+    vintage: [
+      { name: 'Depop', url: 'https://depop.com', description: 'Curated vintage pieces' },
+      { name: 'ThredUp', url: 'https://thredup.com', description: 'Secondhand vintage clothing' },
+      { name: 'Etsy', url: 'https://etsy.com', description: 'Vintage and handmade fashion' },
+    ],
+    y2k: [
+      { name: 'SHEIN', url: 'https://shein.com', description: 'Affordable Y2K inspired styles' },
+      { name: 'Depop', url: 'https://depop.com', description: 'Authentic Y2K vintage finds' },
+      { name: 'PrettyLittleThing', url: 'https://prettylittlething.com', description: 'Y2K trends' },
+    ],
+    minimalist: [
+      { name: 'Everlane', url: 'https://everlane.com', description: 'Clean minimalist essentials' },
+      { name: 'COS', url: 'https://cosstores.com', description: 'Modern minimalist design' },
+      { name: 'Uniqlo', url: 'https://uniqlo.com', description: 'Quality basics and staples' },
+    ],
+    cottagecore: [
+      { name: 'Free People', url: 'https://freepeople.com', description: 'Romantic cottagecore styles' },
+      { name: 'Anthropologie', url: 'https://anthropologie.com', description: 'Whimsical feminine pieces' },
+      { name: 'Etsy', url: 'https://etsy.com', description: 'Handmade cottagecore clothing' },
+    ],
+    preppy: [
+      { name: 'Ralph Lauren', url: 'https://ralphlauren.com', description: 'Classic preppy staples' },
+      { name: 'J.Crew', url: 'https://jcrew.com', description: 'Timeless preppy essentials' },
+      { name: 'Brooks Brothers', url: 'https://brooksbrothers.com', description: 'Traditional preppy style' },
+    ],
+    western: [
+      { name: 'Wrangler', url: 'https://wrangler.com', description: 'Authentic western wear' },
+      { name: 'Boot Barn', url: 'https://bootbarn.com', description: 'Western boots and apparel' },
+      { name: 'Sheplers', url: 'https://sheplers.com', description: 'Western lifestyle clothing' },
+    ],
+    alternative: [
+      { name: 'Hot Topic', url: 'https://hottopic.com', description: 'Alternative and edgy styles' },
+      { name: 'ASOS', url: 'https://asos.com', description: 'Wide range of alt aesthetics' },
+      { name: 'Depop', url: 'https://depop.com', description: 'Unique alternative finds' },
+    ],
+    athleisure: [
+      { name: 'Lululemon', url: 'https://lululemon.com', description: 'Premium athleisure wear' },
+      { name: 'Nike', url: 'https://nike.com', description: 'Sport and lifestyle styles' },
+      { name: 'Gymshark', url: 'https://gymshark.com', description: 'Fitness fashion forward' },
+    ],
+    'business casual': [
+      { name: 'Banana Republic', url: 'https://bananarepublic.com', description: 'Polished business casual' },
+      { name: 'Zara', url: 'https://zara.com', description: 'Modern office-ready styles' },
+      { name: 'Express', url: 'https://express.com', description: 'Work and weekend styles' },
+    ],
+    'dark academia': [
+      { name: 'ASOS', url: 'https://asos.com', description: 'Dark academia essentials' },
+      { name: 'Depop', url: 'https://depop.com', description: 'Thrifted dark academia finds' },
+      { name: 'Zara', url: 'https://zara.com', description: 'Structured outerwear' },
+    ],
+    gorpcore: [
+      { name: 'REI', url: 'https://rei.com', description: 'Outdoor technical gear' },
+      { name: 'Patagonia', url: 'https://patagonia.com', description: 'Sustainable outdoor wear' },
+      { name: 'Arc\'teryx', url: 'https://arcteryx.com', description: 'Premium technical outerwear' },
+    ],
+  };
+
+  return stores[aesthetic] || [
+    { name: 'ASOS', url: 'https://asos.com', description: 'Wide variety of styles' },
+    { name: 'Depop', url: 'https://depop.com', description: 'Unique secondhand finds' },
+    { name: 'Zara', url: 'https://zara.com', description: 'Trendy fashion essentials' },
+  ];
+};
+
 const hexToReadableName = (hex: string): string => {
   if (!hex) return 'Unknown';
   const r = parseInt(hex.slice(1, 3), 16);
@@ -284,6 +355,32 @@ export default function PostDetail() {
         {/* Style description */}
         {post.styleDescription && (
           <p className="text-sm italic text-[var(--text)] mb-4">{post.styleDescription}</p>
+        )}
+
+        {/* Shop Similar */}
+        {post.detectedItems && post.detectedItems.length > 0 && post.aesthetic && (
+          <div className="border border-[var(--border)] rounded-xl p-4 mb-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text)] mb-3">
+              Shop Similar
+            </p>
+            <div className="flex flex-col gap-2">
+              {getStoreSuggestions(post.aesthetic).map((store, i) => (
+                <a
+                  key={i}
+                  href={store.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-between p-3 border border-[var(--border)] rounded-lg hover:border-[var(--accent)] transition"
+                >
+                  <div>
+                    <p className="text-sm font-medium text-[var(--text-h)]">{store.name}</p>
+                    <p className="text-xs text-[var(--text)]">{store.description}</p>
+                  </div>
+                  <span className="text-[var(--text)] text-sm">→</span>
+                </a>
+              ))}
+            </div>
+          </div>
         )}
 
         {/* Comments */}

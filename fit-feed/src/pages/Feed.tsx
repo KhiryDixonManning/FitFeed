@@ -14,8 +14,15 @@ const fetchAuthorEmails = async (posts: Post[], database: Firestore, existingEma
       if (!post.authorId || existingEmails[post.authorId] || emailMap[post.authorId]) return;
       try {
         const userDoc = await getDoc(doc(database, 'users', post.authorId));
-        if (userDoc.exists() && userDoc.data().email) {
-          emailMap[post.authorId] = userDoc.data().email;
+        if (userDoc.exists()) {
+          const data = userDoc.data();
+          if (data.username) {
+            emailMap[post.authorId] = data.username;
+          } else if (data.email) {
+            emailMap[post.authorId] = data.email.split('@')[0];
+          } else {
+            emailMap[post.authorId] = `user_${post.authorId.slice(0, 6)}`;
+          }
         } else {
           emailMap[post.authorId] = `user_${post.authorId.slice(0, 6)}`;
         }
@@ -185,7 +192,7 @@ export default function Feed({ uid }: FeedProps) {
         <div className="flex gap-2 overflow-x-auto pb-2 mb-4 scrollbar-hide -mx-4 px-4 md:mx-0 md:px-6">
           <button
             onClick={() => setSelectedCategory('all')}
-            className={`px-3 py-1 rounded-full text-xs font-medium transition shrink-0 ${
+            className={`px-3 py-1 rounded-full text-xs font-medium transition shrink-0 whitespace-nowrap ${
               selectedCategory === 'all'
                 ? 'bg-[var(--accent)] text-white'
                 : 'border border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)]'
@@ -197,7 +204,7 @@ export default function Feed({ uid }: FeedProps) {
             <button
               key={cat}
               onClick={() => setSelectedCategory(cat)}
-              className={`px-3 py-1 rounded-full text-xs font-medium capitalize transition shrink-0 ${
+              className={`px-3 py-1 rounded-full text-xs font-medium capitalize transition shrink-0 whitespace-nowrap ${
                 selectedCategory === cat
                   ? 'bg-[var(--accent)] text-white'
                   : 'border border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)]'

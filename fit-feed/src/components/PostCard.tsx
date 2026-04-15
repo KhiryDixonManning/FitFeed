@@ -99,7 +99,7 @@ export default function PostCard({
   };
 
   return (
-    <div className="rounded-2xl shadow-lg bg-white overflow-hidden flex flex-col">
+    <div className="rounded-2xl shadow-lg bg-[var(--bg-secondary)] overflow-hidden flex flex-col">
       {/* Image — tapping navigates to post detail */}
       <div
         className="overflow-hidden cursor-pointer bg-gray-100 relative"

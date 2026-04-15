@@ -10,6 +10,9 @@ export interface User {
     uid: string;
     email: string;
     displayName?: string;
+    username?: string;
+    photoURL?: string;
+    createdAt?: string;
 }
 
 export interface Post {

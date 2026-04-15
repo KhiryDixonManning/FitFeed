@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { getTrendingFeed } from '../feedService';
@@ -6,6 +7,7 @@ import { type Post } from '../FirebaseDB';
 import { CATEGORIES } from '../constants/categories';
 
 export default function Leaderboard() {
+  const navigate = useNavigate();
   const [posts, setPosts] = useState<Post[]>([]);
   const [filtered, setFiltered] = useState<Post[]>([]);
   const [selectedCategory, setSelectedCategory] = useState('all');
@@ -18,16 +20,23 @@ export default function Leaderboard() {
       setPosts(trending);
       setFiltered(trending);
 
-      // Batch-fetch author emails
+      // Batch-fetch author display names (prefer username, fall back to email prefix)
       const emailMap: Record<string, string> = {};
       await Promise.all(
         trending.map(async (post) => {
           if (!emailMap[post.authorId]) {
             try {
               const userDoc = await getDoc(doc(db, 'users', post.authorId));
-              emailMap[post.authorId] = (userDoc.exists() && userDoc.data().email)
-                ? userDoc.data().email
-                : `user_${post.authorId.slice(0, 6)}`;
+              if (userDoc.exists()) {
+                const data = userDoc.data();
+                emailMap[post.authorId] = data.username
+                  ? data.username
+                  : data.email
+                    ? data.email.split('@')[0]
+                    : `user_${post.authorId.slice(0, 6)}`;
+              } else {
+                emailMap[post.authorId] = `user_${post.authorId.slice(0, 6)}`;
+              }
             } catch {
               emailMap[post.authorId] = `user_${post.authorId.slice(0, 6)}`;
             }
@@ -58,7 +67,7 @@ export default function Leaderboard() {
       <div className="flex gap-2 overflow-x-auto pb-2 mb-6 scrollbar-hide -mx-4 px-4 md:mx-0 md:px-0">
         <button
           onClick={() => setSelectedCategory('all')}
-          className={`px-3 py-1 rounded-full text-xs font-medium transition shrink-0 ${
+          className={`px-3 py-1 rounded-full text-xs font-medium transition shrink-0 whitespace-nowrap ${
             selectedCategory === 'all'
               ? 'bg-[var(--accent)] text-white'
               : 'border border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)]'
@@ -70,7 +79,7 @@ export default function Leaderboard() {
           <button
             key={cat}
             onClick={() => setSelectedCategory(cat)}
-            className={`px-3 py-1 rounded-full text-xs font-medium capitalize transition shrink-0 ${
+            className={`px-3 py-1 rounded-full text-xs font-medium capitalize transition shrink-0 whitespace-nowrap ${
               selectedCategory === cat
                 ? 'bg-[var(--accent)] text-white'
                 : 'border border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)]'
@@ -90,7 +99,8 @@ export default function Leaderboard() {
             return (
               <div
                 key={post.id}
-                className="flex gap-3 border border-[var(--border)] rounded-xl overflow-hidden bg-[var(--bg)]"
+                onClick={() => navigate(`/post/${post.id}`)}
+                className="flex gap-3 border border-[var(--border)] rounded-xl overflow-hidden bg-[var(--bg)] cursor-pointer hover:border-[var(--accent)] transition-colors active:opacity-80"
               >
                 {/* Rank */}
                 <div className="flex items-center justify-center w-10 text-lg font-bold text-[var(--accent)] shrink-0">

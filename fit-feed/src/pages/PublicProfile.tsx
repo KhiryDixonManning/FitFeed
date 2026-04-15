@@ -9,6 +9,7 @@ export default function PublicProfile() {
   const { uid } = useParams<{ uid: string }>();
   const [posts, setPosts] = useState<Post[]>([]);
   const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [topCategory, setTopCategory] = useState('None yet');
   const [loading, setLoading] = useState(true);
   const currentUid = auth.currentUser?.uid ?? '';
@@ -19,7 +20,11 @@ export default function PublicProfile() {
       // Get author info from users collection
       try {
         const userDoc = await getDoc(doc(db, 'users', uid));
-        if (userDoc.exists()) setEmail(userDoc.data().email || '');
+        if (userDoc.exists()) {
+          const data = userDoc.data();
+          setEmail(data.email || '');
+          setUsername(data.username || '');
+        }
       } catch {
         // user doc may not exist for older accounts
       }
@@ -67,7 +72,9 @@ export default function PublicProfile() {
   return (
     <div className="max-w-2xl mx-auto py-6 text-left">
       <div className="px-4 md:px-0 mb-6">
-        <h2 className="text-2xl font-bold text-[var(--text-h)]">@{email || `user_${uid!.slice(0, 6)}`}</h2>
+        <h2 className="text-2xl font-bold text-[var(--text-h)]">
+          {username ? `@${username}` : email ? `@${email.split('@')[0]}` : `@user_${uid!.slice(0, 6)}`}
+        </h2>
         <p className="text-[var(--text)] text-sm mt-1">
           Top style: <span className="text-[var(--accent)] font-medium">{topCategory}</span>
         </p>

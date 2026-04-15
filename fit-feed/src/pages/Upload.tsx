@@ -136,19 +136,36 @@ export default function Upload({ uid }: UploadProps) {
         <h2 className="text-2xl font-bold text-[var(--text-h)] mb-6">Upload Fit</h2>
 
         <div className="flex flex-col gap-4">
-          <div className="border-2 border-dashed border-[var(--border)] rounded-xl p-8 text-center cursor-pointer active:bg-[var(--accent-bg)] transition">
-            {preview ? (
-              <img src={preview} alt="preview" className="w-full aspect-square object-cover rounded-lg" />
-            ) : (
-              <p className="text-[var(--text)] text-sm">Click to select an image</p>
-            )}
+          <label className="block w-full cursor-pointer">
+            <div className={`border-2 border-dashed rounded-xl overflow-hidden flex flex-col items-center justify-center gap-3 py-10 transition ${
+              preview ? 'border-[var(--accent)] p-0' : 'border-[var(--border)] hover:border-[var(--accent-border)]'
+            }`}>
+              {preview ? (
+                <div className="relative w-full">
+                  <img src={preview} alt="preview" className="w-full aspect-square object-cover" />
+                  <button
+                    type="button"
+                    onClick={(e) => { e.preventDefault(); setImage(null); setPreview(null); }}
+                    className="absolute top-2 right-2 bg-black/60 text-white rounded-full w-8 h-8 flex items-center justify-center text-lg hover:bg-black/80 transition"
+                  >
+                    ×
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <span className="text-4xl">📸</span>
+                  <p className="text-sm text-[var(--text)] text-center">Tap to select a photo</p>
+                  <p className="text-xs text-[var(--text)] opacity-50">JPG, PNG, HEIC supported</p>
+                </>
+              )}
+            </div>
             <input
               type="file"
               accept="image/*"
               onChange={handleImageChange}
-              className="mt-3 text-sm text-[var(--text)]"
+              className="hidden"
             />
-          </div>
+          </label>
 
           <input
             type="text"
