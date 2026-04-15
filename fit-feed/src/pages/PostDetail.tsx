@@ -66,7 +66,7 @@ const getStoreSuggestions = (aesthetic: string) => {
     gorpcore: [
       { name: 'REI', url: 'https://rei.com', description: 'Outdoor technical gear' },
       { name: 'Patagonia', url: 'https://patagonia.com', description: 'Sustainable outdoor wear' },
-      { name: 'Arc\'teryx', url: 'https://arcteryx.com', description: 'Premium technical outerwear' },
+      { name: "Arc'teryx", url: 'https://arcteryx.com', description: 'Premium technical outerwear' },
     ],
   };
 
@@ -127,6 +127,19 @@ export default function PostDetail() {
   const [authorUsername, setAuthorUsername] = useState('');
   const uid = auth.currentUser?.uid || '';
 
+  // FIX 2: photo zoom state
+  const [zoomedImage, setZoomedImage] = useState(false);
+
+  // FIX 10: likers modal state
+  const [showLikers, setShowLikers] = useState(false);
+  const [likerEmails, setLikerEmails] = useState<string[]>([]);
+  const [loadingLikers, setLoadingLikers] = useState(false);
+
+  // FIX 11: scroll to top on mount
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
+  }, []);
+
   useEffect(() => {
     if (!postId) return;
     const load = async () => {
@@ -185,6 +198,31 @@ export default function PostDetail() {
     }
   };
 
+  // FIX 10: show who liked
+  const handleShowLikers = async () => {
+    if (!post?.likedBy || post.likedBy.length === 0) return;
+    setLoadingLikers(true);
+    setShowLikers(true);
+    const emails: string[] = [];
+    for (const likerId of post.likedBy.slice(0, 20)) {
+      try {
+        const userDoc = await getDoc(doc(db, 'users', likerId));
+        if (userDoc.exists()) {
+          const data = userDoc.data();
+          emails.push(
+            data.username
+              ? `@${data.username}`
+              : `@${data.email?.split('@')[0] || 'user'}`
+          );
+        }
+      } catch {
+        emails.push('@user');
+      }
+    }
+    setLikerEmails(emails);
+    setLoadingLikers(false);
+  };
+
   if (loading) return (
     <div className="flex items-center justify-center min-h-screen">
       <p className="text-[var(--text)] animate-pulse">Loading...</p>
@@ -206,17 +244,33 @@ export default function PostDetail() {
         </button>
       </div>
 
-      {/* Full image */}
+      {/* Full image — FIX 2: tappable zoom, FIX 14: no Aura badge */}
       {post.imageUrl && (
-        <div className="relative">
+        <div
+          className="relative cursor-zoom-in"
+          onClick={() => setZoomedImage(true)}
+        >
           <img src={post.imageUrl} alt="outfit" className="w-full object-cover" />
-          {/* Aura badge */}
-          <div className="absolute top-3 right-3 bg-black/80 backdrop-blur-sm rounded-full px-3 py-1 flex items-center gap-1">
-            <span className="text-white text-sm">◎</span>
-            <span className="text-white text-sm font-semibold">
-              {(post.likesCount || 0) + (post.commentsCount || 0)}
-            </span>
-          </div>
+        </div>
+      )}
+
+      {/* FIX 2: Zoom modal */}
+      {zoomedImage && (
+        <div
+          className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center p-4"
+          onClick={() => setZoomedImage(false)}
+        >
+          <img
+            src={post.imageUrl}
+            alt="outfit zoomed"
+            className="max-w-full max-h-full object-contain rounded-lg"
+          />
+          <button
+            className="absolute top-4 right-4 text-white text-2xl bg-black/50 rounded-full w-10 h-10 flex items-center justify-center"
+            onClick={() => setZoomedImage(false)}
+          >
+            ×
+          </button>
         </div>
       )}
 
@@ -232,12 +286,21 @@ export default function PostDetail() {
             </div>
             <span className="text-sm font-medium text-[var(--text-h)]">{formatAuthor(authorEmail, authorUsername)}</span>
           </button>
-          <button
-            onClick={handleLike}
-            className="flex items-center gap-1 text-sm"
-          >
-            {post.likedBy?.includes(uid) ? '❤️' : '🤍'} {post.likesCount || 0}
-          </button>
+          {/* FIX 10: like button shows likers modal on count tap */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleLike}
+              className="flex items-center gap-1 text-sm"
+            >
+              {post.likedBy?.includes(uid) ? '❤️' : '🤍'}
+            </button>
+            <button
+              onClick={handleShowLikers}
+              className="text-sm text-[var(--text)] hover:text-[var(--accent)] transition"
+            >
+              {post.likesCount || 0} {post.likesCount === 1 ? 'like' : 'likes'}
+            </button>
+          </div>
         </div>
 
         {/* Date */}
@@ -249,9 +312,17 @@ export default function PostDetail() {
           </p>
         )}
 
-        {/* Caption */}
-        {post.content && (
-          <h1 className="text-xl font-bold text-[var(--text-h)] mb-2">{post.content}</h1>
+        {/* FIX 15F: Outfit name as hero title */}
+        {post.outfitName && (
+          <p className="text-xs uppercase tracking-widest text-[var(--accent)] mb-1">
+            AI Named This Fit
+          </p>
+        )}
+        <h1 className="text-xl font-bold text-[var(--text-h)] mb-2">
+          {post.outfitName || post.content}
+        </h1>
+        {post.outfitName && post.content && (
+          <p className="text-sm text-[var(--text)] mb-3">{post.content}</p>
         )}
 
         {/* Outfit breakdown */}
@@ -259,7 +330,19 @@ export default function PostDetail() {
           <p className="text-sm text-[var(--text)] mb-4">{post.outfitBreakdown}</p>
         )}
 
-        {/* Color Palette Cards */}
+        {/* FIX 7: Aesthetic / category badge clickable */}
+        {post.aesthetic && (
+          <div className="mb-3">
+            <button
+              onClick={() => navigate(`/explore?category=${encodeURIComponent(post.aesthetic!)}`)}
+              className="text-xs bg-[var(--accent)] text-white rounded-full px-3 py-1 capitalize hover:opacity-80 transition"
+            >
+              {post.aesthetic}
+            </button>
+          </div>
+        )}
+
+        {/* Color Palette Cards — FIX 9: clickable */}
         {post.palette && post.palette.length > 0 && (
           <div className="flex gap-2 mb-4">
             {post.palette.map((color, i) => {
@@ -272,7 +355,8 @@ export default function PostDetail() {
               return (
                 <div
                   key={i}
-                  className="flex-1 rounded-xl overflow-hidden"
+                  onClick={() => navigate(`/explore?color=${encodeURIComponent(c.name)}`)}
+                  className="flex-1 rounded-xl overflow-hidden cursor-pointer hover:opacity-90 transition active:scale-95"
                   style={{ backgroundColor: c.hex, minHeight: '80px' }}
                 >
                   <div className="flex flex-col justify-between p-3 min-h-[80px]">
@@ -296,30 +380,32 @@ export default function PostDetail() {
           </div>
         )}
 
-        {/* Aesthetic Composition */}
+        {/* FIX 13: Compact aesthetic composition chips */}
         {post.aestheticScores && Object.keys(post.aestheticScores).length > 0 && (
           <div className="mb-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text)] mb-1">
+            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text)] mb-2">
               Aesthetic Composition
             </p>
-            <p className="text-xs text-[var(--text)] opacity-60 mb-3">(subjective; contextual)</p>
-            <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap gap-1.5">
               {Object.entries(post.aestheticScores)
-                .filter(([, score]) => score > 0.1)
+                .filter(([, score]) => score > 0.2)
                 .sort((a, b) => b[1] - a[1])
+                .slice(0, 4)
                 .map(([label, score]) => (
-                  <div key={label} className="flex items-center gap-3">
-                    <span className="text-sm text-[var(--text-h)] capitalize w-28 shrink-0">{label}</span>
-                    <div className="flex-1 h-2 bg-[var(--border)] rounded-full overflow-hidden">
-                      <div
-                        className="h-full rounded-full transition-all duration-700"
-                        style={{
-                          width: `${Math.round(score * 100)}%`,
-                          backgroundColor: score > 0.5 ? '#2d5a27' : score > 0.3 ? '#4a7c42' : '#8a9e85',
-                        }}
-                      />
-                    </div>
-                  </div>
+                  <button
+                    key={label}
+                    onClick={() => navigate(`/explore?category=${encodeURIComponent(label)}`)}
+                    className="flex items-center gap-1.5 bg-[var(--bg-secondary)] border border-[var(--border)] rounded-full px-2.5 py-1 hover:border-[var(--accent)] transition"
+                  >
+                    <div
+                      className="w-2 h-2 rounded-full shrink-0"
+                      style={{
+                        backgroundColor: score > 0.6 ? '#2d5a27' : score > 0.4 ? '#4a7c42' : '#8a9e85'
+                      }}
+                    />
+                    <span className="text-xs text-[var(--text-h)] capitalize">{label}</span>
+                    <span className="text-xs text-[var(--text)] opacity-60">{Math.round(score * 100)}%</span>
+                  </button>
                 ))}
             </div>
           </div>
@@ -335,13 +421,17 @@ export default function PostDetail() {
           </div>
         )}
 
-        {/* Style tags */}
+        {/* FIX 7: Aesthetic tags — clickable */}
         {post.aestheticTags && post.aestheticTags.length > 0 && (
           <div className="flex gap-2 flex-wrap mb-4">
             {post.aestheticTags.map((tag, i) => (
-              <span key={i} className="border border-[var(--border)] rounded-full px-3 py-1 text-xs text-[var(--text)]">
+              <button
+                key={i}
+                onClick={() => navigate(`/explore?tag=${encodeURIComponent(tag)}`)}
+                className="border border-[var(--border)] rounded-full px-3 py-1 text-xs text-[var(--text)] hover:border-[var(--accent)] hover:text-[var(--accent)] transition"
+              >
                 {tag}
-              </span>
+              </button>
             ))}
           </div>
         )}
@@ -427,6 +517,45 @@ export default function PostDetail() {
           </div>
         </div>
       </div>
+
+      {/* FIX 10: Likers modal */}
+      {showLikers && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 flex items-end justify-center"
+          onClick={() => setShowLikers(false)}
+        >
+          <div
+            className="bg-[var(--bg)] rounded-t-2xl w-full max-w-lg p-6 max-h-96 overflow-y-auto"
+            onClick={e => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-bold text-[var(--text-h)] mb-4">
+              Liked by {post.likesCount || 0}
+            </h3>
+            {loadingLikers ? (
+              <p className="text-sm text-[var(--text)] animate-pulse">Loading...</p>
+            ) : likerEmails.length === 0 ? (
+              <p className="text-sm text-[var(--text)]">No likes yet</p>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {likerEmails.map((email, i) => (
+                  <div key={i} className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-[var(--bg-secondary)] flex items-center justify-center text-sm">
+                      👤
+                    </div>
+                    <p className="text-sm text-[var(--text-h)]">{email}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button
+              onClick={() => setShowLikers(false)}
+              className="w-full mt-4 border border-[var(--border)] rounded-xl py-3 text-sm text-[var(--text)]"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -25,9 +25,11 @@ async function triggerAnalysis(postId: string, imageUrl: string): Promise<void> 
         await updateDoc(doc(db, 'posts', postId), {
           palette: analysis.palette || [],
           aesthetic: analysis.aesthetic || null,
+          outfitName: analysis.outfitName || null,
           aestheticTags: analysis.aestheticTags || [],
           detectedItems: analysis.detectedItems || [],
           styleDescription: analysis.styleDescription || null,
+          styleNotes: analysis.styleNotes || null,
           aestheticScores: analysis.aestheticScores || {},
           analyzed: true,
         });

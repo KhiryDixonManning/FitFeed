@@ -35,6 +35,7 @@ export interface Post {
     styleNotes?: string;
     aestheticScores?: Record<string, number>;
     analyzed?: boolean;
+    outfitName?: string;
 }
 
 export interface Comment {
@@ -149,9 +150,14 @@ export const getComments = async (postId: string): Promise<Comment[]> => {
             orderBy("createdAt", "asc")
         );
         const snapshot = await getDocs(q);
-        return snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Comment));
-    } catch (error) {
-        console.log("Error fetching comments:", error);
+        const comments = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Comment));
+        console.log(`[getComments] Fetched ${comments.length} comments for post ${postId}`);
+        return comments;
+    } catch (error: any) {
+        console.error("[getComments] Error:", error);
+        if (error.code === "failed-precondition") {
+            console.error("[getComments] Missing Firestore index. Click this link:", error.message);
+        }
         return [];
     }
 };

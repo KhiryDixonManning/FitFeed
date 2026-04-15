@@ -113,9 +113,10 @@ def reanalyze_all():
             has_old_palette = (
                 len(palette) > 0 and isinstance(palette[0], str)
             )
+            missing_outfit_name = not post_data.get("outfitName")
 
-            # Reanalyze if not analyzed OR if palette is old string format
-            needs_analysis = not post_data.get("analyzed") or has_old_palette
+            # Reanalyze if not analyzed, palette is old string format, or outfitName is missing
+            needs_analysis = not post_data.get("analyzed") or has_old_palette or missing_outfit_name
 
             if not needs_analysis:
                 skipped += 1
@@ -128,6 +129,7 @@ def reanalyze_all():
                 post_doc.reference.update({
                     "palette": result["palette"],
                     "aesthetic": result.get("aesthetic"),
+                    "outfitName": result.get("outfitName"),
                     "aestheticTags": result.get("aestheticTags", []),
                     "detectedItems": result.get("detectedItems", []),
                     "styleDescription": result.get("styleDescription"),

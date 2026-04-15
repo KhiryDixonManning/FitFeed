@@ -107,6 +107,7 @@ def analyze_outfit_with_claude_bytes(image_bytes: bytes) -> dict:
   "aesthetic": "one of: streetwear, vintage, y2k, minimalist, cottagecore, preppy, western, alternative, athleisure, business casual, gorpcore, dark academia, other",
   "aestheticTags": ["tag1", "tag2", "tag3"],
   "detectedItems": ["item1", "item2", "item3"],
+  "outfitName": "A 3-5 word poetic evocative name for this specific outfit that captures its energy and vibe. Like a song title or album name. Examples: Red Static Against the Concrete, Archive of Quiet Observations, Borrowed Light in Motion, Soft Chaos Theory. Make it specific to THIS outfit not generic.",
   "styleDescription": "Exactly 2 sentences describing this look and how to articulate it.",
   "styleNotes": "3-4 sentences of deeper analysis about the aesthetic composition, cultural references, and what makes this outfit work. Be specific and insightful like a fashion editor.",
   "aestheticScores": {
@@ -122,7 +123,7 @@ def analyze_outfit_with_claude_bytes(image_bytes: bytes) -> dict:
     {"hex": "#FFFFFF", "name": "White", "percentage": 7}
   ]
 }
-For colors: analyze ONLY the clothing and accessories being worn. Ignore background walls, floors, mirrors, furniture, and objects not being worn. Provide exactly 3 dominant colors from the outfit itself with a creative fashion-forward name (like Metropolis, Ivory, Slate, Rust, Sage, Camel, Cobalt — not just basic color names), the hex code, and the percentage of the OUTFIT (not the whole image) that color occupies."""
+For colors: analyze ONLY the clothing and accessories being worn. Ignore background walls, floors, mirrors, furniture, shelving, other people, and any objects not being worn by the subject. Provide exactly 3 dominant colors from the OUTFIT ITSELF with a creative fashion-forward name (like Metropolis, Ivory, Slate, Rust, Sage, Camel, Cobalt, Onyx — not just basic color names), the hex code, and the percentage of the OUTFIT that color occupies."""
                         }
                     ],
                 }
@@ -158,6 +159,7 @@ def analyze_post(image_url: str) -> dict:
     result = {
         "palette": [],
         "aesthetic": None,
+        "outfitName": None,
         "aestheticTags": [],
         "detectedItems": [],
         "styleDescription": None,
@@ -191,6 +193,7 @@ def analyze_post(image_url: str) -> dict:
             # Fall back to KMeans palette if Claude didn't return colors
             result["palette"] = claude_result.get("colors", kmeans_palette)
             result["aesthetic"] = claude_result.get("aesthetic")
+            result["outfitName"] = claude_result.get("outfitName")
             result["aestheticTags"] = claude_result.get("aestheticTags", [])
             result["detectedItems"] = claude_result.get("detectedItems", [])
             result["styleDescription"] = claude_result.get("styleDescription")

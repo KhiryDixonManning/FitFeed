@@ -7,6 +7,7 @@ import { recordInteraction } from '../feedService';
 import { auth, db } from '../../firebase';
 import StyleProfile from '../components/StyleProfile';
 import { useNavigate } from 'react-router-dom';
+import { seedAllPosts, removeAllDemoComments } from '../utils/demoComments';
 
 interface ProfileProps {
   uid: string;
@@ -184,6 +185,27 @@ export default function Profile({ uid }: ProfileProps) {
       <div className="mb-6 px-4 md:px-0">
         <StyleProfile preferences={userPreferences} />
       </div>
+
+      {/* Demo Controls — dev only */}
+      {import.meta.env.DEV && (
+        <div className="border border-yellow-500 rounded-xl p-4 mb-4 px-4 md:px-0 mx-4 md:mx-0">
+          <p className="text-xs font-semibold text-yellow-600 mb-3">Demo Controls (dev only)</p>
+          <div className="flex gap-2">
+            <button
+              onClick={seedAllPosts}
+              className="flex-1 bg-yellow-500 text-white rounded-lg px-3 py-2 text-xs font-medium"
+            >
+              Seed Demo Comments
+            </button>
+            <button
+              onClick={removeAllDemoComments}
+              className="flex-1 border border-yellow-500 text-yellow-600 rounded-lg px-3 py-2 text-xs font-medium"
+            >
+              Remove Demo Comments
+            </button>
+          </div>
+        </div>
+      )}
 
       {posts.length === 0 ? (
         <p className="text-[var(--text)] text-sm px-4 md:px-0">No posts yet. Upload your first fit!</p>

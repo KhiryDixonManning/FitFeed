@@ -128,9 +128,12 @@ export default function PostCard({
         {/* Category badge bottom left */}
         {post.category && (
           <div className="absolute bottom-2 left-2">
-            <span className="bg-black/70 backdrop-blur-sm text-white text-xs rounded-full px-2 py-1 capitalize">
+            <button
+              onClick={(e) => { e.stopPropagation(); navigate(`/explore?category=${encodeURIComponent(post.category!)}`); }}
+              className="bg-black/70 backdrop-blur-sm text-white text-xs rounded-full px-2 py-1 capitalize"
+            >
               {post.category}
-            </span>
+            </button>
           </div>
         )}
       </div>
@@ -144,9 +147,11 @@ export default function PostCard({
           <ProfileAvatar size={36} />
         </button>
         <div className="flex-1 min-w-0">
-          {post.content && (
+          {post.outfitName ? (
+            <p className="font-semibold text-gray-900 text-sm leading-tight truncate italic">"{post.outfitName}"</p>
+          ) : post.content ? (
             <p className="font-semibold text-gray-900 text-sm leading-tight truncate">{post.content}</p>
-          )}
+          ) : null}
           <p className="text-gray-500 text-xs truncate">{formatAuthor(authorEmail)}</p>
         </div>
       </div>
@@ -155,9 +160,12 @@ export default function PostCard({
       {(post.category || post.outfitBreakdown) && (
         <div className="px-3 pt-2 flex flex-col gap-1">
           {post.category && (
-            <span className="text-xs bg-[var(--accent)] text-white rounded-full px-2 py-0.5 w-fit capitalize">
+            <button
+              onClick={() => navigate(`/explore?category=${encodeURIComponent(post.category!)}`)}
+              className="text-xs bg-[var(--accent)] text-white rounded-full px-2 py-0.5 w-fit capitalize hover:opacity-80 transition"
+            >
               {post.category}
-            </span>
+            </button>
           )}
           {post.outfitBreakdown && (
             <p className="text-xs text-gray-500 leading-relaxed">{post.outfitBreakdown}</p>
@@ -186,7 +194,8 @@ export default function PostCard({
             return (
               <div
                 key={i}
-                className="flex-1 rounded-xl overflow-hidden"
+                onClick={() => navigate(`/explore?color=${encodeURIComponent(c.name)}`)}
+                className="flex-1 rounded-xl overflow-hidden cursor-pointer hover:opacity-90 transition active:scale-95"
                 style={{ backgroundColor: c.hex, minHeight: '72px' }}
               >
                 <div className="flex flex-col justify-between p-2 min-h-[72px]">
@@ -216,12 +225,13 @@ export default function PostCard({
           {post.aestheticTags && post.aestheticTags.length > 0 && (
             <div className="flex gap-1 flex-wrap mt-1">
               {post.aestheticTags.map((tag, i) => (
-                <span
+                <button
                   key={i}
-                  className="text-xs border border-[var(--border)] rounded-full px-2 py-0.5 text-[var(--text)]"
+                  onClick={() => navigate(`/explore?tag=${encodeURIComponent(tag)}`)}
+                  className="text-xs border border-[var(--border)] rounded-full px-2 py-0.5 text-[var(--text)] hover:border-[var(--accent)] hover:text-[var(--accent)] transition"
                 >
                   {tag}
-                </span>
+                </button>
               ))}
             </div>
           )}
@@ -235,24 +245,34 @@ export default function PostCard({
               {post.styleDescription}
             </p>
           )}
+          {/* Compact aesthetic composition chips */}
           {post.aestheticScores && Object.keys(post.aestheticScores).length > 0 && (
-            <div className="mt-2 flex flex-col gap-1">
-              {Object.entries(post.aestheticScores)
-                .filter(([, score]) => score > 0.3)
-                .sort((a, b) => b[1] - a[1])
-                .slice(0, 3)
-                .map(([label, score]) => (
-                  <div key={label} className="flex items-center gap-2">
-                    <span className="text-xs text-[var(--text)] w-24 capitalize">{label}</span>
-                    <div className="flex-1 h-1.5 bg-[var(--border)] rounded-full overflow-hidden">
+            <div className="mt-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text)] mb-2">
+                Aesthetic Composition
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {Object.entries(post.aestheticScores)
+                  .filter(([, score]) => score > 0.2)
+                  .sort((a, b) => b[1] - a[1])
+                  .slice(0, 4)
+                  .map(([label, score]) => (
+                    <button
+                      key={label}
+                      onClick={() => navigate(`/explore?category=${encodeURIComponent(label)}`)}
+                      className="flex items-center gap-1.5 bg-[var(--bg-secondary)] border border-[var(--border)] rounded-full px-2.5 py-1 hover:border-[var(--accent)] transition"
+                    >
                       <div
-                        className="h-full bg-[var(--accent)] rounded-full transition-all duration-500"
-                        style={{ width: `${Math.round(score * 100)}%` }}
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{
+                          backgroundColor: score > 0.6 ? '#2d5a27' : score > 0.4 ? '#4a7c42' : '#8a9e85'
+                        }}
                       />
-                    </div>
-                    <span className="text-xs text-[var(--text)]">{Math.round(score * 100)}%</span>
-                  </div>
-                ))}
+                      <span className="text-xs text-[var(--text-h)] capitalize">{label}</span>
+                      <span className="text-xs text-[var(--text)] opacity-60">{Math.round(score * 100)}%</span>
+                    </button>
+                  ))}
+              </div>
             </div>
           )}
           {post.styleNotes && (

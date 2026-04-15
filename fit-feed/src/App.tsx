@@ -10,6 +10,8 @@ import PublicProfile from './pages/PublicProfile';
 import Leaderboard from './pages/Leaderboard';
 import PostDetail from './pages/PostDetail';
 import Insights from './pages/Insights';
+import About from './pages/About';
+import Explore from './pages/Explore';
 import Login from './pages/Login';
 import Navbar from './components/Navbar';
 
@@ -53,6 +55,8 @@ export default function App() {
         <Route path="/leaderboard" element={user ? <Leaderboard /> : <Navigate to="/login" replace />} />
         <Route path="/post/:postId" element={user ? <PostDetail /> : <Navigate to="/login" replace />} />
         <Route path="/insights" element={user ? <Insights uid={user.uid} /> : <Navigate to="/login" replace />} />
+        <Route path="/about" element={<About />} />
+        <Route path="/explore" element={user ? <Explore /> : <Navigate to="/login" replace />} />
         <Route path="*" element={<Navigate to={user ? "/" : "/login"} replace />} />
       </Routes>
     </div>

@@ -6,6 +6,7 @@ const navItems = [
   { path: '/upload',      label: 'Upload',        icon: '➕' },
   { path: '/leaderboard', label: 'Aura Farmers',  icon: '🏆' },
   { path: '/insights',    label: 'Insights',      icon: '📊' },
+  { path: '/about',       label: 'About',         icon: 'ℹ️' },
   { path: '/profile',     label: 'Profile',       icon: '👤' },
 ];
 
