@@ -4,6 +4,7 @@ import { auth } from '../../firebase';
 import { addComment, getComments, type Comment, type Post } from '../FirebaseDB';
 import { recordInteraction } from '../feedService';
 import ProfileAvatar from './ProfileAvatar';
+import { formatAuthor } from '../utils/formatAuthor';
 
 const hexToReadableName = (hex: string): string => {
   if (!hex) return 'Unknown';
@@ -146,7 +147,7 @@ export default function PostCard({
           {post.content && (
             <p className="font-semibold text-gray-900 text-sm leading-tight truncate">{post.content}</p>
           )}
-          <p className="text-gray-500 text-xs truncate">@{authorEmail}</p>
+          <p className="text-gray-500 text-xs truncate">{formatAuthor(authorEmail)}</p>
         </div>
       </div>
 

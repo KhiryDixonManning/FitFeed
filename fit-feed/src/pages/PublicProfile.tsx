@@ -4,6 +4,7 @@ import { getPosts, toggleLike, getUserPreferences, type Post } from '../Firebase
 import { recordInteraction } from '../feedService';
 import { auth, db } from '../../firebase';
 import { doc, getDoc } from 'firebase/firestore';
+import { formatAuthor } from '../utils/formatAuthor';
 
 export default function PublicProfile() {
   const { uid } = useParams<{ uid: string }>();
@@ -73,7 +74,7 @@ export default function PublicProfile() {
     <div className="max-w-2xl mx-auto py-6 text-left">
       <div className="px-4 md:px-0 mb-6">
         <h2 className="text-2xl font-bold text-[var(--text-h)]">
-          {username ? `@${username}` : email ? `@${email.split('@')[0]}` : `@user_${uid!.slice(0, 6)}`}
+          {formatAuthor(email || `user_${uid!.slice(0, 6)}`, username)}
         </h2>
         <p className="text-[var(--text)] text-sm mt-1">
           Top style: <span className="text-[var(--accent)] font-medium">{topCategory}</span>

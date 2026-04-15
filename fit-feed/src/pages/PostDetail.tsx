@@ -4,6 +4,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { db, auth } from '../../firebase';
 import { type Post, toggleLike, getComments, addComment, type Comment } from '../FirebaseDB';
 import { recordInteraction } from '../feedService';
+import { formatAuthor } from '../utils/formatAuthor';
 
 const getStoreSuggestions = (aesthetic: string) => {
   const stores: Record<string, { name: string; url: string; description: string }[]> = {
@@ -123,6 +124,7 @@ export default function PostDetail() {
   const [newComment, setNewComment] = useState('');
   const [loading, setLoading] = useState(true);
   const [authorEmail, setAuthorEmail] = useState('');
+  const [authorUsername, setAuthorUsername] = useState('');
   const uid = auth.currentUser?.uid || '';
 
   useEffect(() => {
@@ -139,7 +141,9 @@ export default function PostDetail() {
 
         const userDoc = await getDoc(doc(db, 'users', data.authorId));
         if (userDoc.exists()) {
-          setAuthorEmail(userDoc.data().email || data.authorId);
+          const userData = userDoc.data();
+          setAuthorEmail(userData.email || data.authorId);
+          setAuthorUsername(userData.username || '');
         } else {
           setAuthorEmail(`user_${data.authorId.slice(0, 6)}`);
         }
@@ -226,7 +230,7 @@ export default function PostDetail() {
             <div className="w-8 h-8 rounded-full bg-[var(--border)] flex items-center justify-center text-xs">
               👤
             </div>
-            <span className="text-sm font-medium text-[var(--text-h)]">@{authorEmail}</span>
+            <span className="text-sm font-medium text-[var(--text-h)]">{formatAuthor(authorEmail, authorUsername)}</span>
           </button>
           <button
             onClick={handleLike}
