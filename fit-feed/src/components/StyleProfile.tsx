@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import {
   Radar,
   RadarChart,
@@ -66,10 +67,10 @@ export default function StyleProfile({ preferences }: StyleProfileProps) {
     );
   }
 
-  const chartData = buildChartData(preferences);
-  const topCategory = getTopCategory(preferences);
-  const topCategories = getTopCategories(preferences);
-  const maxScore = Math.max(...Object.values(preferences), 1);
+  const chartData = useMemo(() => buildChartData(preferences), [preferences]);
+  const topCategory = useMemo(() => getTopCategory(preferences), [preferences]);
+  const topCategories = useMemo(() => getTopCategories(preferences), [preferences]);
+  const maxScore = useMemo(() => Math.max(...Object.values(preferences), 1), [preferences]);
 
   return (
     <div className="border border-[var(--border)] rounded-xl p-6 animate-fade-in">

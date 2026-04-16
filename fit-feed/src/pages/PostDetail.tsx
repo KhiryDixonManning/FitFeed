@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { doc, getDoc } from 'firebase/firestore';
 import { db, auth } from '../../firebase';
@@ -125,6 +125,7 @@ export default function PostDetail() {
   const [loading, setLoading] = useState(true);
   const [authorEmail, setAuthorEmail] = useState('');
   const [authorUsername, setAuthorUsername] = useState('');
+  const [authorPhotoURL, setAuthorPhotoURL] = useState('');
   const uid = auth.currentUser?.uid || '';
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -133,43 +134,61 @@ export default function PostDetail() {
   // FIX 2: photo zoom state
   const [zoomedImage, setZoomedImage] = useState(false);
 
+  const storeSuggestions = useMemo(
+    () => post?.aesthetic ? getStoreSuggestions(post.aesthetic) : [],
+    [post?.aesthetic]
+  );
+
   // FIX 10: likers modal state
   const [showLikers, setShowLikers] = useState(false);
   const [likerEmails, setLikerEmails] = useState<string[]>([]);
   const [loadingLikers, setLoadingLikers] = useState(false);
 
-  // FIX 11: scroll to top on mount
-  useEffect(() => {
-    window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
-  }, []);
-
   useEffect(() => {
     if (!postId) return;
+
+    window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
+
     const load = async () => {
-      const postDoc = await getDoc(doc(db, 'posts', postId));
-      if (postDoc.exists()) {
+      try {
+        const [postSnap, commentsResult] = await Promise.all([
+          getDoc(doc(db, 'posts', postId)),
+          getComments(postId),
+        ]);
+
+        if (!postSnap.exists()) {
+          setLoading(false);
+          return;
+        }
+
         const data = {
-          id: postDoc.id,
-          ...postDoc.data(),
-          createdAt: postDoc.data().createdAt?.toDate?.()?.toISOString() ?? new Date().toISOString(),
+          id: postSnap.id,
+          ...postSnap.data(),
+          createdAt: postSnap.data().createdAt?.toDate?.()?.toISOString() ?? new Date().toISOString(),
         } as Post;
         setPost(data);
+        setComments(commentsResult);
 
-        const userDoc = await getDoc(doc(db, 'users', data.authorId));
-        if (userDoc.exists()) {
-          const userData = userDoc.data();
+        // Fetch author info after post is set
+        const userSnap = await getDoc(doc(db, 'users', data.authorId));
+        if (userSnap.exists()) {
+          const userData = userSnap.data();
           setAuthorEmail(userData.email || data.authorId);
           setAuthorUsername(userData.username || '');
+          setAuthorPhotoURL(userData.photoURL || '');
         } else {
           setAuthorEmail(`user_${data.authorId.slice(0, 6)}`);
         }
-
-        const fetchedComments = await getComments(postId);
-        setComments(fetchedComments);
+      } catch (error) {
+        console.error('[PostDetail] Load error:', error);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     };
-    load();
+
+    const timeout = setTimeout(() => setLoading(false), 6000);
+    load().then(() => clearTimeout(timeout));
+    return () => clearTimeout(timeout);
   }, [postId]);
 
   const handleLike = async () => {
@@ -240,8 +259,19 @@ export default function PostDetail() {
   };
 
   if (loading) return (
-    <div className="flex items-center justify-center min-h-screen">
-      <p className="text-[var(--text)] animate-pulse">Loading...</p>
+    <div className="max-w-lg mx-auto pb-24 animate-pulse">
+      <div className="w-full aspect-square bg-[var(--border)]" />
+      <div className="p-4 flex flex-col gap-3">
+        <div className="h-4 bg-[var(--border)] rounded w-1/3" />
+        <div className="h-6 bg-[var(--border)] rounded w-2/3" />
+        <div className="flex gap-2">
+          <div className="h-16 bg-[var(--border)] rounded-xl flex-1" />
+          <div className="h-16 bg-[var(--border)] rounded-xl flex-1" />
+          <div className="h-16 bg-[var(--border)] rounded-xl flex-1" />
+        </div>
+        <div className="h-4 bg-[var(--border)] rounded w-full" />
+        <div className="h-4 bg-[var(--border)] rounded w-4/5" />
+      </div>
     </div>
   );
 
@@ -266,7 +296,7 @@ export default function PostDetail() {
           className="relative cursor-zoom-in"
           onClick={() => setZoomedImage(true)}
         >
-          <img src={post.imageUrl} alt="outfit" className="w-full object-cover" />
+          <img src={post.imageUrl} alt="outfit" className="w-full object-cover" loading="lazy" decoding="async" />
         </div>
       )}
 
@@ -297,8 +327,10 @@ export default function PostDetail() {
             onClick={() => navigate(`/profile/${post.authorId}`)}
             className="flex items-center gap-2"
           >
-            <div className="w-8 h-8 rounded-full bg-[var(--border)] flex items-center justify-center text-xs">
-              👤
+            <div className="w-8 h-8 rounded-full bg-[var(--border)] flex items-center justify-center text-xs overflow-hidden shrink-0">
+              {authorPhotoURL
+                ? <img src={authorPhotoURL} alt="avatar" className="w-full h-full object-cover" loading="lazy" decoding="async" />
+                : '👤'}
             </div>
             <span className="text-sm font-medium text-[var(--text-h)]">{formatAuthor(authorEmail, authorUsername)}</span>
           </button>
@@ -336,12 +368,7 @@ export default function PostDetail() {
           </p>
         )}
 
-        {/* FIX 15F: Outfit name as hero title */}
-        {post.outfitName && (
-          <p className="text-xs uppercase tracking-widest text-[var(--accent)] mb-1">
-            AI Named This Fit
-          </p>
-        )}
+        {/* Outfit name as hero title */}
         <h1 className="text-xl font-bold text-[var(--text-h)] mb-2">
           {post.outfitName || post.content}
         </h1>
@@ -482,7 +509,7 @@ export default function PostDetail() {
               Shop Similar
             </p>
             <div className="flex flex-col gap-2">
-              {getStoreSuggestions(post.aesthetic).map((store, i) => (
+              {storeSuggestions.map((store, i) => (
                 <a
                   key={i}
                   href={store.url}

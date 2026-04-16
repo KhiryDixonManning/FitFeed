@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { getPosts, toggleLike, getUserPreferences, deletePost } from '../FirebaseDB';
+import { getPosts, toggleLike, getUserPreferences, deletePost, getFollowerCount, getFollowingCount } from '../FirebaseDB';
 import type { Post } from '../FirebaseDB';
 import { recordInteraction } from '../feedService';
 import { auth, db } from '../../firebase';
@@ -19,6 +19,8 @@ export default function Profile({ uid }: ProfileProps) {
   const [userPreferences, setUserPreferences] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
+  const [followerCount, setFollowerCount] = useState(0);
+  const [followingCount, setFollowingCount] = useState(0);
 
   // Username state
   const [username, setUsername] = useState('');
@@ -35,8 +37,14 @@ export default function Profile({ uid }: ProfileProps) {
       const myPosts = allPosts.filter(p => p.authorId === uid);
       setPosts(myPosts);
 
-      const prefs = await getUserPreferences(uid);
+      const [prefs, fCount, fgCount] = await Promise.all([
+        getUserPreferences(uid),
+        getFollowerCount(uid),
+        getFollowingCount(uid),
+      ]);
       setUserPreferences(prefs);
+      setFollowerCount(fCount);
+      setFollowingCount(fgCount);
 
       // Load username and avatar from users collection
       if (auth.currentUser) {
@@ -164,6 +172,14 @@ export default function Profile({ uid }: ProfileProps) {
             </button>
           )}
           <p className="text-[var(--text)] text-sm mt-0.5">{auth.currentUser?.email}</p>
+          <div className="flex gap-4 mt-2">
+            <span className="text-xs text-[var(--text)]">
+              <span className="font-semibold text-[var(--text-h)]">{followerCount}</span> followers
+            </span>
+            <span className="text-xs text-[var(--text)]">
+              <span className="font-semibold text-[var(--text-h)]">{followingCount}</span> following
+            </span>
+          </div>
 
           {editingUsername && (
             <div className="flex gap-2 mt-2 flex-wrap">
@@ -229,7 +245,7 @@ export default function Profile({ uid }: ProfileProps) {
                 onClick={() => navigate(`/post/${post.id}`)}
               >
                 {post.imageUrl && (
-                  <img src={post.imageUrl} alt="outfit" className="w-full aspect-square object-cover" />
+                  <img src={post.imageUrl} alt="outfit" className="w-full aspect-square object-cover" loading="lazy" decoding="async" />
                 )}
                 <div className="p-3">
                   <p className="text-sm text-[var(--text-h)] mb-1 truncate">{post.content}</p>

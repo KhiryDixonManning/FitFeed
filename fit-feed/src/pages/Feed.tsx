@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { getFollowingIds } from '../FirebaseDB';
 import { collection, onSnapshot, query, orderBy, doc, getDoc, type Firestore } from "firebase/firestore";
 import { db } from "../../firebase";
 import PostCard from "../components/PostCard";
@@ -44,7 +45,9 @@ export default function Feed({ uid }: FeedProps) {
   const [apiOnline, setApiOnline] = useState(true);
   const [likingIds, setLikingIds] = useState<Set<string>>(new Set());
   const [authorEmails, setAuthorEmails] = useState<Record<string, string>>({});
-  const [tab, setTab] = useState<'foryou' | 'discover'>('foryou');
+  const [tab, setTab] = useState<'foryou' | 'discover' | 'following'>('foryou');
+  const [followingIds, setFollowingIds] = useState<string[]>([]);
+  const isFirstLoadRef = useRef(true);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const rankDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const authorEmailsRef = useRef<Record<string, string>>({});
@@ -61,15 +64,30 @@ export default function Feed({ uid }: FeedProps) {
   }, []);
 
   useEffect(() => {
+    getFollowingIds(uid).then(ids => setFollowingIds(ids));
+  }, [uid]);
+
+  useEffect(() => {
     const postsRef = collection(db, 'posts');
     const q = query(postsRef, orderBy('createdAt', 'desc'));
 
     const unsubscribe = onSnapshot(q, async (snapshot) => {
-      const posts: Post[] = snapshot.docs.map(d => ({
+      const snapshotPosts: Post[] = snapshot.docs.map(d => ({
         id: d.id,
         ...d.data(),
         createdAt: d.data().createdAt?.toDate?.()?.toISOString() ?? new Date().toISOString(),
       } as Post));
+
+      // Show unranked posts immediately on first load so feed appears fast
+      if (snapshotPosts.length > 0 && isFirstLoadRef.current) {
+        setPosts(snapshotPosts);
+        setLoading(false);
+        isFirstLoadRef.current = false;
+      }
+
+      // Fetch author emails for any new authors
+      const emails = await fetchAuthorEmails(snapshotPosts, db, authorEmailsRef.current);
+      setAuthorEmails(prev => ({ ...prev, ...emails }));
 
       // Debounce ranking so rapid bursts of likes don't hammer Flask
       if (rankDebounceRef.current) clearTimeout(rankDebounceRef.current);
@@ -79,26 +97,19 @@ export default function Feed({ uid }: FeedProps) {
           const response = await fetch(`${PYTHON_API}/rank`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ posts, userPreferences }),
+            body: JSON.stringify({ posts: snapshotPosts, userPreferences }),
           });
           if (response.ok) {
             const ranked = await response.json();
             setPosts(ranked);
-            const emails = await fetchAuthorEmails(ranked, db, authorEmailsRef.current);
-            setAuthorEmails(prev => ({ ...prev, ...emails }));
           } else {
-            setPosts(posts);
-            const emails = await fetchAuthorEmails(posts, db, authorEmailsRef.current);
-            setAuthorEmails(prev => ({ ...prev, ...emails }));
+            setPosts(snapshotPosts);
           }
         } catch {
-          setPosts(posts);
-          const emails = await fetchAuthorEmails(posts, db, authorEmailsRef.current);
-          setAuthorEmails(prev => ({ ...prev, ...emails }));
+          setPosts(snapshotPosts);
         }
-
         setLoading(false);
-      }, 500);
+      }, 300);
     });
 
     // Clean up listener and any pending debounce when component unmounts
@@ -146,9 +157,11 @@ export default function Feed({ uid }: FeedProps) {
     ));
   };
 
-  // Discover tab: sort by newest first; For You: keep ranked order
+  // Discover: newest first; Following: filter to followed users; For You: ranked order
   const tabPosts = tab === 'discover'
     ? [...posts].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    : tab === 'following'
+    ? posts.filter(p => followingIds.includes(p.authorId))
     : posts;
 
   const visiblePosts = selectedCategory === 'all'
@@ -186,6 +199,16 @@ export default function Feed({ uid }: FeedProps) {
           >
             Discover
           </button>
+          <button
+            onClick={() => setTab('following')}
+            className={`flex-1 md:flex-none px-4 py-1.5 rounded-full text-sm font-medium transition ${
+              tab === 'following'
+                ? 'bg-[var(--accent)] text-white'
+                : 'border border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)]'
+            }`}
+          >
+            Following
+          </button>
         </div>
 
         {/* Category filter bar — horizontal scroll on all sizes */}
@@ -220,7 +243,11 @@ export default function Feed({ uid }: FeedProps) {
           <div className="text-center text-gray-400 py-12">Loading feed...</div>
         ) : visiblePosts.length === 0 ? (
           <div className="text-center text-gray-400 py-12 px-4">
-            {posts.length === 0 ? 'No posts yet. Be the first to share a fit!' : 'No posts in this category yet.'}
+            {tab === 'following' && followingIds.length === 0
+              ? 'Follow people to see their posts here!'
+              : posts.length === 0
+              ? 'No posts yet. Be the first to share a fit!'
+              : 'No posts in this category yet.'}
           </div>
         ) : (
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 md:gap-6 px-4 md:px-6">

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auth } from '../../firebase';
 import { addComment, getComments, type Comment, type Post } from '../FirebaseDB';
@@ -55,7 +55,7 @@ interface PostCardProps {
   onCommentAdded: (postId: string) => void;
 }
 
-export default function PostCard({
+function PostCard({
   post,
   uid,
   authorEmail,
@@ -112,6 +112,7 @@ export default function PostCard({
             alt={post.content ?? 'outfit'}
             className="w-full aspect-square object-cover"
             loading="lazy"
+            decoding="async"
           />
         ) : (
           <div className="w-full aspect-square flex items-center justify-center text-gray-400 text-sm">
@@ -376,3 +377,5 @@ export default function PostCard({
     </div>
   );
 }
+
+export default memo(PostCard);

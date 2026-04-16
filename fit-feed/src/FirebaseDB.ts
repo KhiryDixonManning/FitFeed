@@ -238,3 +238,69 @@ export const deletePost = async (postId: string, uid: string): Promise<boolean> 
         return false;
     }
 };
+
+export const followUser = async (followerId: string, followingId: string): Promise<boolean> => {
+    try {
+        const followId = `${followerId}_${followingId}`;
+        await setDoc(doc(db, 'follows', followId), {
+            followerId,
+            followingId,
+            createdAt: new Date().toISOString(),
+        });
+        return true;
+    } catch (error) {
+        console.error('[followUser] Error:', error);
+        return false;
+    }
+};
+
+export const unfollowUser = async (followerId: string, followingId: string): Promise<boolean> => {
+    try {
+        const followId = `${followerId}_${followingId}`;
+        await deleteDoc(doc(db, 'follows', followId));
+        return true;
+    } catch (error) {
+        console.error('[unfollowUser] Error:', error);
+        return false;
+    }
+};
+
+export const isFollowing = async (followerId: string, followingId: string): Promise<boolean> => {
+    try {
+        const followId = `${followerId}_${followingId}`;
+        const followSnap = await getDoc(doc(db, 'follows', followId));
+        return followSnap.exists();
+    } catch {
+        return false;
+    }
+};
+
+export const getFollowerCount = async (uid: string): Promise<number> => {
+    try {
+        const q = query(collection(db, 'follows'), where('followingId', '==', uid));
+        const snapshot = await getDocs(q);
+        return snapshot.size;
+    } catch {
+        return 0;
+    }
+};
+
+export const getFollowingCount = async (uid: string): Promise<number> => {
+    try {
+        const q = query(collection(db, 'follows'), where('followerId', '==', uid));
+        const snapshot = await getDocs(q);
+        return snapshot.size;
+    } catch {
+        return 0;
+    }
+};
+
+export const getFollowingIds = async (uid: string): Promise<string[]> => {
+    try {
+        const q = query(collection(db, 'follows'), where('followerId', '==', uid));
+        const snapshot = await getDocs(q);
+        return snapshot.docs.map(d => d.data().followingId);
+    } catch {
+        return [];
+    }
+};

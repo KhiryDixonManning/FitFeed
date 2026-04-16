@@ -1,5 +1,4 @@
-import { getPosts } from "./FirebaseDB";
-import { getUserPreferences, saveUserPreferences } from "./FirebaseDB";
+import { getPosts, getUserPreferences, saveUserPreferences, getFollowingIds } from "./FirebaseDB";
 import { PYTHON_API } from './config';
 
 export const getRankedFeed = async (uid: string): Promise<any[]> => {
@@ -38,6 +37,17 @@ export const getTrendingFeed = async (): Promise<any[]> => {
     } catch (error) {
         console.warn("Python API unavailable:", error);
         return posts;
+    }
+};
+
+export const getFollowingFeed = async (uid: string): Promise<any[]> => {
+    try {
+        const followingIds = await getFollowingIds(uid);
+        if (followingIds.length === 0) return [];
+        const allPosts = await getPosts();
+        return allPosts.filter(post => followingIds.includes(post.authorId));
+    } catch {
+        return [];
     }
 };
 
