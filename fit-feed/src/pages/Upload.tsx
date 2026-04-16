@@ -5,11 +5,12 @@ import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { addPost } from '../FirebaseDB';
 import { CATEGORIES } from '../constants/categories';
+import { PYTHON_API } from '../config';
 
 async function triggerAnalysis(postId: string, imageUrl: string): Promise<void> {
   console.log('[triggerAnalysis] Starting for postId:', postId, 'imageUrl:', imageUrl);
   try {
-    const response = await fetch('/api/analyze', {
+    const response = await fetch(`${PYTHON_API}/analyze`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ imageUrl }),
@@ -38,7 +39,7 @@ async function triggerAnalysis(postId: string, imageUrl: string): Promise<void> 
         console.warn('[triggerAnalysis] analyzed=false, not writing to Firestore');
       }
     } else {
-      console.error('[triggerAnalysis] Bad response from /api/analyze:', response.status);
+      console.error('[triggerAnalysis] Bad response from analyze endpoint:', response.status);
     }
   } catch (err) {
     console.error('[triggerAnalysis] Failed:', err);
