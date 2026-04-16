@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { doc, getDoc } from 'firebase/firestore';
 import { db, auth } from '../../firebase';
-import { type Post, toggleLike, getComments, addComment, type Comment } from '../FirebaseDB';
+import { type Post, toggleLike, getComments, addComment, type Comment, deletePost } from '../FirebaseDB';
 import { recordInteraction } from '../feedService';
 import { formatAuthor } from '../utils/formatAuthor';
 
@@ -127,6 +127,9 @@ export default function PostDetail() {
   const [authorUsername, setAuthorUsername] = useState('');
   const uid = auth.currentUser?.uid || '';
 
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
   // FIX 2: photo zoom state
   const [zoomedImage, setZoomedImage] = useState(false);
 
@@ -195,6 +198,19 @@ export default function PostDetail() {
       setComments(updated);
       setPost(prev => prev ? { ...prev, commentsCount: (prev.commentsCount || 0) + 1 } : null);
       if (post.category) await recordInteraction(uid, post.category, 'comment');
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!post || !uid) return;
+    setDeleting(true);
+    const success = await deletePost(post.id, uid);
+    if (success) {
+      navigate('/', { replace: true });
+    } else {
+      setDeleting(false);
+      setShowDeleteConfirm(false);
+      alert('Failed to delete post. Please try again.');
     }
   };
 
@@ -288,6 +304,14 @@ export default function PostDetail() {
           </button>
           {/* FIX 10: like button shows likers modal on count tap */}
           <div className="flex items-center gap-2">
+            {uid === post.authorId && (
+              <button
+                onClick={() => setShowDeleteConfirm(true)}
+                className="text-xs border border-red-300 text-red-500 rounded-full px-3 py-1 hover:bg-red-50 transition cursor-pointer"
+              >
+                Delete
+              </button>
+            )}
             <button
               onClick={handleLike}
               className="flex items-center gap-1 text-sm"
@@ -517,6 +541,40 @@ export default function PostDetail() {
           </div>
         </div>
       </div>
+
+      {/* Delete confirmation modal */}
+      {showDeleteConfirm && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
+          onClick={() => setShowDeleteConfirm(false)}
+        >
+          <div
+            className="bg-[var(--bg)] rounded-2xl w-full max-w-sm p-6"
+            onClick={e => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-bold text-[var(--text-h)] mb-2">Delete Post?</h3>
+            <p className="text-sm text-[var(--text)] mb-6">
+              This will permanently delete your post, its comments, and the image. This cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={deleting}
+                className="flex-1 border border-[var(--border)] rounded-xl py-3 text-sm text-[var(--text)] cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="flex-1 bg-red-500 text-white rounded-xl py-3 text-sm font-medium cursor-pointer disabled:opacity-50"
+              >
+                {deleting ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* FIX 10: Likers modal */}
       {showLikers && (

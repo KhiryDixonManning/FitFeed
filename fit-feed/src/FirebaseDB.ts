@@ -1,7 +1,8 @@
 import {
   collection, addDoc, DocumentReference, getDocs, query, orderBy, where,
-  doc, getDoc, setDoc, updateDoc, increment, arrayUnion, arrayRemove,
+  doc, getDoc, setDoc, updateDoc, increment, arrayUnion, arrayRemove, deleteDoc,
 } from "firebase/firestore";
+import { getStorage, ref, deleteObject } from "firebase/storage";
 import { db } from "../firebase";
 import { FirebaseError } from "firebase/app";
 import { type Category } from "./constants/categories";
@@ -185,6 +186,55 @@ export const addComment = async (
         return true;
     } catch (error) {
         console.log("Error adding comment:", error);
+        return false;
+    }
+};
+
+export const deletePost = async (postId: string, uid: string): Promise<boolean> => {
+    try {
+        const postRef = doc(db, "posts", postId);
+        const postSnap = await getDoc(postRef);
+
+        if (!postSnap.exists()) return false;
+
+        const postData = postSnap.data();
+
+        // Only allow the author to delete
+        if (postData.authorId !== uid) {
+            console.error("Unauthorized: only the author can delete this post");
+            return false;
+        }
+
+        // Delete image from Firebase Storage if it exists
+        if (postData.imageUrl) {
+            try {
+                const storage = getStorage();
+                const imageRef = ref(storage, postData.imageUrl);
+                await deleteObject(imageRef);
+            } catch (storageError) {
+                // Storage delete can fail if file was already deleted or URL format changed
+                // Continue with Firestore delete regardless
+                console.warn("Storage delete failed, continuing:", storageError);
+            }
+        }
+
+        // Delete the Firestore document
+        await deleteDoc(postRef);
+
+        // Delete associated comments
+        const commentsQuery = query(
+            collection(db, "comments"),
+            where("postId", "==", postId)
+        );
+        const commentsSnapshot = await getDocs(commentsQuery);
+        await Promise.all(
+            commentsSnapshot.docs.map(commentDoc => deleteDoc(commentDoc.ref))
+        );
+
+        console.log(`[deletePost] Post ${postId} deleted successfully`);
+        return true;
+    } catch (error) {
+        console.error("[deletePost] Error:", error);
         return false;
     }
 };

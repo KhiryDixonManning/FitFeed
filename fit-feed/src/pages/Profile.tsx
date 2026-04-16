@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { getPosts, toggleLike, getUserPreferences } from '../FirebaseDB';
+import { getPosts, toggleLike, getUserPreferences, deletePost } from '../FirebaseDB';
 import type { Post } from '../FirebaseDB';
 import { recordInteraction } from '../feedService';
 import { auth, db } from '../../firebase';
@@ -18,6 +18,7 @@ export default function Profile({ uid }: ProfileProps) {
   const [posts, setPosts] = useState<Post[]>([]);
   const [userPreferences, setUserPreferences] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
+  const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
 
   // Username state
   const [username, setUsername] = useState('');
@@ -105,6 +106,16 @@ export default function Profile({ uid }: ProfileProps) {
     if (didLike && post.category) {
       await recordInteraction(uid, post.category, 'like');
     }
+  };
+
+  const handleDeleteFromProfile = async (postId: string) => {
+    if (!window.confirm('Delete this post permanently?')) return;
+    setDeletingPostId(postId);
+    const success = await deletePost(postId, uid);
+    if (success) {
+      setPosts(prev => prev.filter(p => p.id !== postId));
+    }
+    setDeletingPostId(null);
   };
 
   if (loading) return <div className="p-8 text-center text-[var(--text)]">Loading profile...</div>;
@@ -212,28 +223,37 @@ export default function Profile({ uid }: ProfileProps) {
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 gap-3 px-4 md:px-0">
           {posts.map(post => (
-            <div
-              key={post.id}
-              className="border border-[var(--border)] rounded-lg overflow-hidden cursor-pointer hover:border-[var(--accent)] transition-colors"
-              onClick={() => navigate(`/post/${post.id}`)}
-            >
-              {post.imageUrl && (
-                <img src={post.imageUrl} alt="outfit" className="w-full aspect-square object-cover" />
-              )}
-              <div className="p-3">
-                <p className="text-sm text-[var(--text-h)] mb-1 truncate">{post.content}</p>
-                {post.category && (
-                  <span className="text-xs bg-[var(--accent)] text-white rounded-full px-2 py-0.5">
-                    {post.category}
-                  </span>
+            <div key={post.id} className="relative group">
+              <div
+                className="border border-[var(--border)] rounded-lg overflow-hidden cursor-pointer hover:border-[var(--accent)] transition-colors"
+                onClick={() => navigate(`/post/${post.id}`)}
+              >
+                {post.imageUrl && (
+                  <img src={post.imageUrl} alt="outfit" className="w-full aspect-square object-cover" />
                 )}
-                <button
-                  onClick={(e) => { e.stopPropagation(); handleLike(post); }}
-                  className="mt-2 flex items-center gap-1 text-sm text-[var(--text)] hover:text-[var(--accent)] transition"
-                >
-                  {post.likedBy?.includes(uid) ? '❤️' : '🤍'} {post.likesCount || 0}
-                </button>
+                <div className="p-3">
+                  <p className="text-sm text-[var(--text-h)] mb-1 truncate">{post.content}</p>
+                  {post.category && (
+                    <span className="text-xs bg-[var(--accent)] text-white rounded-full px-2 py-0.5">
+                      {post.category}
+                    </span>
+                  )}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleLike(post); }}
+                    className="mt-2 flex items-center gap-1 text-sm text-[var(--text)] hover:text-[var(--accent)] transition"
+                  >
+                    {post.likedBy?.includes(uid) ? '❤️' : '🤍'} {post.likesCount || 0}
+                  </button>
+                </div>
               </div>
+              {/* Delete button — always visible on mobile, appears on hover on desktop */}
+              <button
+                onClick={(e) => { e.stopPropagation(); handleDeleteFromProfile(post.id); }}
+                disabled={deletingPostId === post.id}
+                className="absolute top-2 left-2 bg-red-500/80 backdrop-blur-sm text-white rounded-full w-7 h-7 flex items-center justify-center text-xs opacity-100 md:opacity-0 md:group-hover:opacity-100 transition cursor-pointer disabled:opacity-50"
+              >
+                {deletingPostId === post.id ? '…' : '×'}
+              </button>
             </div>
           ))}
         </div>
