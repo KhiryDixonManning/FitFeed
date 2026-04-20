@@ -1,4 +1,4 @@
-# 👗 FitFeed — Personalized Fashion, Powered by Data
+#  FitFeed — Personalized Fashion, Powered by Data
 
 ![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
 ![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)
@@ -10,7 +10,7 @@
 
 ---
 
-## 🚀 Overview
+##  Overview
 
 FitFeed is a fashion-focused social media platform where users share real outfits, receive AI-powered analysis, and discover content tailored to their personal style.
 
@@ -25,9 +25,9 @@ Built in 5 weeks by a team of 3, FitFeed demonstrates a full-stack system with:
 
 ---
 
-## ✨ Features
+## Features
 
-### 🤖 AI Outfit Analysis Pipeline
+### AI Outfit Analysis Pipeline
 - Runs automatically after upload (non-blocking)
 - Extracts **5 dominant colors** using KMeans clustering
 - Sends image to Claude AI (base64 encoded)
@@ -42,7 +42,7 @@ Built in 5 weeks by a team of 3, FitFeed demonstrates a full-stack system with:
 
 ---
 
-### 🔥 Personalized Feed
+### Personalized Feed
 - Multi-factor ranking system using:
   - Engagement (likes & comments)
   - Recency (time decay)
@@ -52,7 +52,7 @@ Built in 5 weeks by a team of 3, FitFeed demonstrates a full-stack system with:
 
 ---
 
-### 🧠 Personalization System
+### Personalization System
 - Likes → +1 to category score
 - Comments → +2 (stronger signal)
 - Stored per user in Firestore
@@ -60,7 +60,7 @@ Built in 5 weeks by a team of 3, FitFeed demonstrates a full-stack system with:
 
 ---
 
-### ⚡ Real-Time Feed
+### Real-Time Feed
 - Firestore `onSnapshot` listener updates UI instantly
 - AI results appear without refresh
 - Debounced API calls prevent spam
@@ -68,7 +68,7 @@ Built in 5 weeks by a team of 3, FitFeed demonstrates a full-stack system with:
 
 ---
 
-### 📊 Style Profile
+### Style Profile
 - Radar chart visualization (Recharts)
 - Tracks preferences across 10 categories
 - Displays top style badge
@@ -76,7 +76,7 @@ Built in 5 weeks by a team of 3, FitFeed demonstrates a full-stack system with:
 
 ---
 
-### 🧰 Additional Features
+### Additional Features
 - Firebase Auth (protected routes)
 - Image compression (5MB → ~300KB)
 - Optimistic UI updates
@@ -89,7 +89,7 @@ Built in 5 weeks by a team of 3, FitFeed demonstrates a full-stack system with:
 
 ---
 
-## 🧱 Architecture
+## Architecture
 
 ```
 User Uploads Outfit
@@ -115,9 +115,9 @@ Personalized Feed
 
 ---
 
-## ⚙️ Tech Stack
+## Tech Stack
 
-### 🎨 Frontend
+### Frontend
 - React + TypeScript
 - Vite
 - Tailwind CSS v4
@@ -126,14 +126,14 @@ Personalized Feed
 
 ---
 
-### ☁️ Backend / Database
+### Backend / Database
 - Firebase Authentication
 - Firestore (posts, users, preferences)
 - Firebase Storage (images)
 
 ---
 
-### 🧠 Intelligence Layer
+### Intelligence Layer
 - Python Flask API
 - Scikit-learn (KMeans clustering)
 - Pillow (image processing)
@@ -141,7 +141,7 @@ Personalized Feed
 
 ---
 
-### 🤖 AI Integration
+### AI Integration
 - Anthropic Claude API
   - Style tags
   - Outfit descriptions
@@ -149,7 +149,7 @@ Personalized Feed
 
 ---
 
-### 🧪 Testing & Tooling
+### Testing & Tooling
 - Playwright
 - Concurrently
 - Firebase Admin SDK
@@ -159,7 +159,7 @@ Personalized Feed
 
 ---
 
-## 🧠 Recommendation Algorithm (Simplified)
+## Recommendation Algorithm (Simplified)
 
 FitFeed ranks posts using a weighted scoring system:
 
@@ -183,7 +183,7 @@ This allows the feed to:
 
 ---
 
-## 🤖 AI Analysis Pipeline
+## AI Analysis Pipeline
 
 Each outfit is enriched using:
 
@@ -204,7 +204,7 @@ Each outfit is enriched using:
 
 ---
 
-## 🛠️ Getting Started
+## Getting Started
 
 ### Prerequisites
 - Node.js 18+
@@ -214,7 +214,7 @@ Each outfit is enriched using:
 
 ---
 
-### 🔧 Installation
+### Installation
 
 #### Frontend
 ```bash
@@ -242,7 +242,7 @@ pip install -r requirements.txt
 python app.py
 ```
 
-### 🔐 Environment Variables
+### Environment Variables
 
 | Variable | Description |
 |---|---|
@@ -254,7 +254,7 @@ python app.py
 
 ---
 
-## 📜 Available Scripts
+## Available Scripts
 
 | Command | Description |
 |---|---|
@@ -265,7 +265,7 @@ python app.py
 
 ---
 
-## 🚀 Deployment
+## Deployment
 
 **Frontend**  
 Firebase Hosting  
@@ -277,7 +277,7 @@ Railway
 
 ---
 
-## 🧪 Testing
+## Testing
 
 Run Playwright tests:
 
@@ -292,7 +292,7 @@ Covers:
 
 ---
 
-## 🌟 Why This Project Stands Out
+## Why This Project Stands Out
 - Multi-layer architecture (not just CRUD)
 - Real-time data synchronization
 - AI used for data enrichment, not just labeling
@@ -302,7 +302,7 @@ Covers:
 
 ---
 
-## 👥 Team
+## Team
 
 | Role | Responsibility |
 |---|---|
@@ -312,6 +312,6 @@ Covers:
 
 ---
 
-## 📬 Contact
+## Contact
 
 Feel free to reach out for questions, feedback, or collaboration.
