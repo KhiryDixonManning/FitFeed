@@ -225,11 +225,78 @@ tied to the mid-session `/model` switch. No workaround was needed once the
 user re-approved; flagging in case it recurs.
 
 ### Not done / explicitly deferred
-- "Why this was recommended" and the empty-states redesign remain deferred
-  per user instruction (Railway still down for the former).
+- The empty-states redesign remains deferred (not requested this pass).
 - No collections/multiple saved lists — this is a single flat "Saved" list,
   matching the scoped MVP described in the shortlist. Multi-collection
   support (e.g. named boards) would be a natural follow-up if requested.
+
+## Phase 3b — "Why this was recommended" (2026-08-22, CODE COMPLETE,
+## BLOCKED ON RAILWAY REDEPLOY)
+
+### Railway re-verification (done first, as requested)
+User redeployed Railway. Confirmed directly:
+- `GET /health` → `{"status":"ok"}` (verified via curl and in-browser)
+- CORS reflects `https://fitfeed-67ee8.web.app` correctly on both `/health`
+  and the `/rank` preflight (`OPTIONS` with `Access-Control-Request-Method:
+  POST`) — no CORS bug, matches the existing explicit-origin allowlist in
+  `app.py`.
+- Live Playwright check on production with a throwaway account: offline
+  banner **not shown**, `GET /health` → 200 and `POST /rank` → 200 in the
+  network log, zero console errors. Railway is fully healthy from the
+  frontend's perspective.
+
+### What was built
+`recommendation_engine.py` already computed several legible per-post
+signals (Wilson-score engagement confidence, trending velocity, comment
+ratio boost, freshness tier, user-preference match) but only ever returned
+a reordered post list — none of it reached the user. Changed `calculate_score`
+to return `(score, factors)` where `factors` is a small dict of weighted
+contributions (`communityConfidence`, `trendingVelocity`, `conversationBoost`,
+`styleMatch`) plus `freshnessTier`/`ageHours`/`matchedCategory`; threaded
+through `apply_diversity_penalty`; `rank_posts` now attaches `_rankingFactors`
+to each returned post. Verified locally with a standalone script (3 synthetic
+posts, checked the returned breakdown makes sense — the fresh/preference-
+matched post scored highest with `styleMatch` and `freshnessTier` as the
+visible drivers).
+
+Frontend: new `src/utils/rankingExplanation.ts` turns the raw contribution
+weights into 1-3 short, human-readable reasons ("Trending right now",
+"Matches your streetwear style", "Just posted"), sorted by strength and
+filtered below a noise threshold (avoids showing a "reason" for a
+near-zero contribution). `Post` interface gets an optional `_rankingFactors`
+field. `PostCard.tsx` gets a small "Why this?" toggle in the actions row —
+present only when ranking data exists — that reveals the reasons as chips
+matching the existing Aesthetic Composition chip style (no new visual
+language, no dashboard/badge look, consistent with the Phase 2 audit's
+identity guidance). Wired into `Feed.tsx` **only for the For You tab**
+(`rankingFactors={tab === 'foryou' ? post._rankingFactors : undefined}`) —
+Discover is chronological and Following is social, so a ranking
+explanation wouldn't be meaningful there. Degrades safely: any post without
+`_rankingFactors` (unranked fallback, or Discover/Following) simply has no
+"Why this?" button — no broken state possible.
+
+Build passes (`npm run build`). Committed:
+`36eadc4 Surface why each post was ranked into the feed` (rebased onto a
+README commit made directly on GitHub since the last push — no conflicts).
+
+### BLOCKED: not deployed to Railway
+Pushed to `origin/main` (you confirmed you wanted this route, expecting
+Railway to auto-deploy from GitHub). Polled `POST /rank` for ~3.5 minutes
+afterward — it still returns the old (no `_rankingFactors`) response shape,
+so **the push did not trigger a Railway redeploy** within that window. The
+service itself is healthy and responding correctly with the old code, so
+this isn't a crash — just stale code. Two likely explanations: Railway's
+GitHub integration isn't actually connected/enabled for this repo, or it's
+watching a different branch/root directory. Needs you to either confirm the
+GitHub integration is live (and give it more time) or trigger a manual
+redeploy from the Railway dashboard / `railway up`.
+
+**Next step for whoever picks this up**: once Railway is confirmed running
+the new code (`curl -X POST .../rank` with a dummy post should return
+`_rankingFactors` in the response), do a live Playwright pass on the For
+You tab: confirm the "Why this?" button appears, click it, confirm the
+chips render sensible reasons, and confirm it's absent on Discover/Following
+and absent entirely if the fallback (unranked) path is hit.
 
 ## Session log
 - **2026-08-22 (pass 1)**: Diagnosed both Phase 1 bugs + Railway status with
@@ -251,3 +318,13 @@ user re-approved; flagging in case it recurs.
   the classifier initially blocked `firebase deploy`). Verified all 4
   end-to-end checks on production with a throwaway account, created and
   deleted within this session. Phase 3 complete.
+- **2026-08-22 (pass 4)**: Re-verified Railway is healthy and reachable from
+  the frontend after the user's redeploy (banner clear, /health + /rank both
+  200, CORS correct). Implemented "why this was recommended": backend now
+  returns a per-post ranking-factors breakdown, frontend surfaces it as a
+  "Why this?" toggle on the For You tab only. Pushed to GitHub expecting
+  Railway auto-deploy; after ~3.5 minutes of polling, the live /rank
+  endpoint still runs the old code — Railway did not pick up the push.
+  Frontend deploy still pending too (holding off until backend confirmed
+  live, so both ship together). Blocked on the user confirming/triggering
+  the Railway redeploy.
