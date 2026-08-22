@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { getPosts, toggleLike, getUserPreferences, deletePost, getFollowerCount, getFollowingCount } from '../FirebaseDB';
+import { getPosts, toggleLike, getUserPreferences, deletePost, getFollowerCount, getFollowingCount, getSavedPostIds, unsavePost } from '../FirebaseDB';
 import type { Post } from '../FirebaseDB';
 import { recordInteraction } from '../feedService';
 import { auth, db } from '../../firebase';
@@ -17,6 +17,8 @@ interface ProfileProps {
 export default function Profile({ uid }: ProfileProps) {
   const navigate = useNavigate();
   const [posts, setPosts] = useState<Post[]>([]);
+  const [savedPosts, setSavedPosts] = useState<Post[]>([]);
+  const [tab, setTab] = useState<'mine' | 'saved'>('mine');
   const [userPreferences, setUserPreferences] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -42,14 +44,17 @@ export default function Profile({ uid }: ProfileProps) {
         const myPosts = allPosts.filter(p => p.authorId === uid);
         setPosts(myPosts);
 
-        const [prefs, fCount, fgCount] = await Promise.all([
+        const [prefs, fCount, fgCount, savedIds] = await Promise.all([
           getUserPreferences(uid),
           getFollowerCount(uid),
           getFollowingCount(uid),
+          getSavedPostIds(uid),
         ]);
         setUserPreferences(prefs);
         setFollowerCount(fCount);
         setFollowingCount(fgCount);
+        const savedIdSet = new Set(savedIds);
+        setSavedPosts(allPosts.filter(p => savedIdSet.has(p.id)));
 
         // Load username and avatar from users collection
         if (auth.currentUser) {
@@ -123,6 +128,11 @@ export default function Profile({ uid }: ProfileProps) {
     if (didLike && post.category) {
       await recordInteraction(uid, post.category, 'like');
     }
+  };
+
+  const handleUnsave = async (postId: string) => {
+    setSavedPosts(prev => prev.filter(p => p.id !== postId));
+    await unsavePost(uid, postId);
   };
 
   const handleDeleteFromProfile = async (postId: string) => {
@@ -257,11 +267,76 @@ export default function Profile({ uid }: ProfileProps) {
         </div>
       )}
 
-      {posts.length === 0 ? (
-        <p className="text-[var(--text)] text-sm px-4 md:px-0">No posts yet. Upload your first fit!</p>
+      {/* My Posts / Saved tab switcher */}
+      <div className="flex gap-2 px-4 md:px-0 mb-4">
+        <button
+          onClick={() => setTab('mine')}
+          className={`px-4 py-1.5 rounded-full text-sm font-medium transition ${
+            tab === 'mine'
+              ? 'bg-[var(--accent)] text-white'
+              : 'border border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)]'
+          }`}
+        >
+          My Posts
+        </button>
+        <button
+          onClick={() => setTab('saved')}
+          className={`px-4 py-1.5 rounded-full text-sm font-medium transition ${
+            tab === 'saved'
+              ? 'bg-[var(--accent)] text-white'
+              : 'border border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)]'
+          }`}
+        >
+          Saved
+        </button>
+      </div>
+
+      {tab === 'mine' ? (
+        posts.length === 0 ? (
+          <p className="text-[var(--text)] text-sm px-4 md:px-0">No posts yet. Upload your first fit!</p>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 gap-3 px-4 md:px-0">
+            {posts.map(post => (
+              <div key={post.id} className="relative group">
+                <div
+                  className="border border-[var(--border)] rounded-lg overflow-hidden cursor-pointer hover:border-[var(--accent)] transition-colors"
+                  onClick={() => navigate(`/post/${post.id}`)}
+                >
+                  <PostImage src={post.imageUrl} alt="outfit" className="w-full aspect-square object-cover" />
+                  <div className="p-3">
+                    <p className="text-sm text-[var(--text-h)] mb-1 truncate">{post.content}</p>
+                    {post.category && (
+                      <span className="text-xs bg-[var(--accent)] text-white rounded-full px-2 py-0.5">
+                        {post.category}
+                      </span>
+                    )}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleLike(post); }}
+                      className="mt-2 flex items-center gap-1 text-sm text-[var(--text)] hover:text-[var(--accent)] transition"
+                    >
+                      {post.likedBy?.includes(uid) ? '❤️' : '🤍'} {post.likesCount || 0}
+                    </button>
+                  </div>
+                </div>
+                {/* Delete button — always visible on mobile, appears on hover on desktop */}
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleDeleteFromProfile(post.id); }}
+                  disabled={deletingPostId === post.id}
+                  className="absolute top-2 left-2 bg-red-500/80 backdrop-blur-sm text-white rounded-full w-7 h-7 flex items-center justify-center text-xs opacity-100 md:opacity-0 md:group-hover:opacity-100 transition cursor-pointer disabled:opacity-50"
+                >
+                  {deletingPostId === post.id ? '…' : '×'}
+                </button>
+              </div>
+            ))}
+          </div>
+        )
+      ) : savedPosts.length === 0 ? (
+        <p className="text-[var(--text)] text-sm px-4 md:px-0">
+          No saved outfits yet. Tap the bookmark icon on a post to save it here.
+        </p>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 gap-3 px-4 md:px-0">
-          {posts.map(post => (
+          {savedPosts.map(post => (
             <div key={post.id} className="relative group">
               <div
                 className="border border-[var(--border)] rounded-lg overflow-hidden cursor-pointer hover:border-[var(--accent)] transition-colors"
@@ -269,27 +344,23 @@ export default function Profile({ uid }: ProfileProps) {
               >
                 <PostImage src={post.imageUrl} alt="outfit" className="w-full aspect-square object-cover" />
                 <div className="p-3">
-                  <p className="text-sm text-[var(--text-h)] mb-1 truncate">{post.content}</p>
+                  <p className="text-sm text-[var(--text-h)] mb-1 truncate">{post.outfitName || post.content}</p>
                   {post.category && (
                     <span className="text-xs bg-[var(--accent)] text-white rounded-full px-2 py-0.5">
                       {post.category}
                     </span>
                   )}
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleLike(post); }}
-                    className="mt-2 flex items-center gap-1 text-sm text-[var(--text)] hover:text-[var(--accent)] transition"
-                  >
-                    {post.likedBy?.includes(uid) ? '❤️' : '🤍'} {post.likesCount || 0}
-                  </button>
                 </div>
               </div>
-              {/* Delete button — always visible on mobile, appears on hover on desktop */}
+              {/* Unsave button — always visible on mobile, appears on hover on desktop */}
               <button
-                onClick={(e) => { e.stopPropagation(); handleDeleteFromProfile(post.id); }}
-                disabled={deletingPostId === post.id}
-                className="absolute top-2 left-2 bg-red-500/80 backdrop-blur-sm text-white rounded-full w-7 h-7 flex items-center justify-center text-xs opacity-100 md:opacity-0 md:group-hover:opacity-100 transition cursor-pointer disabled:opacity-50"
+                onClick={(e) => { e.stopPropagation(); handleUnsave(post.id); }}
+                aria-label="Unsave"
+                className="absolute top-2 left-2 bg-black/70 backdrop-blur-sm text-white rounded-full w-7 h-7 flex items-center justify-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition cursor-pointer"
               >
-                {deletingPostId === post.id ? '…' : '×'}
+                <svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24" className="size-4">
+                  <path d="M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z" />
+                </svg>
               </button>
             </div>
           ))}

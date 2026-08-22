@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { doc, getDoc } from 'firebase/firestore';
 import { db, auth } from '../../firebase';
-import { type Post, toggleLike, getComments, addComment, type Comment, deletePost } from '../FirebaseDB';
+import { type Post, toggleLike, getComments, addComment, type Comment, deletePost, isPostSaved, savePost, unsavePost } from '../FirebaseDB';
 import { recordInteraction } from '../feedService';
 import { formatAuthor } from '../utils/formatAuthor';
 import PostImage from '../components/PostImage';
@@ -145,6 +145,9 @@ export default function PostDetail() {
   const [likerEmails, setLikerEmails] = useState<string[]>([]);
   const [loadingLikers, setLoadingLikers] = useState(false);
 
+  const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+
   useEffect(() => {
     if (!postId) return;
 
@@ -180,6 +183,10 @@ export default function PostDetail() {
         } else {
           setAuthorEmail(`user_${data.authorId.slice(0, 6)}`);
         }
+
+        if (uid) {
+          setSaved(await isPostSaved(uid, data.id));
+        }
       } catch (error) {
         console.error('[PostDetail] Load error:', error);
       } finally {
@@ -206,6 +213,19 @@ export default function PostDetail() {
     if (didLike && post.category) {
       await recordInteraction(uid, post.category, 'like');
     }
+  };
+
+  const handleToggleSave = async () => {
+    if (!post || !uid || saving) return;
+    const wasSaved = saved;
+    setSaved(!wasSaved);
+    setSaving(true);
+    if (wasSaved) {
+      await unsavePost(uid, post.id);
+    } else {
+      await savePost(uid, post.id);
+    }
+    setSaving(false);
   };
 
   const handleAddComment = async () => {
@@ -356,6 +376,27 @@ export default function PostDetail() {
               className="text-sm text-[var(--text)] hover:text-[var(--accent)] transition"
             >
               {post.likesCount || 0} {post.likesCount === 1 ? 'like' : 'likes'}
+            </button>
+            <button
+              onClick={handleToggleSave}
+              disabled={saving}
+              aria-label={saved ? 'Unsave' : 'Save'}
+              className={`p-1 -mr-1 disabled:opacity-50 ${saved ? 'text-[var(--accent)]' : 'text-[var(--text)] hover:text-[var(--accent)]'} transition`}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill={saved ? 'currentColor' : 'none'}
+                viewBox="0 0 24 24"
+                strokeWidth="1.5"
+                stroke="currentColor"
+                className="size-5"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z"
+                />
+              </svg>
             </button>
           </div>
         </div>

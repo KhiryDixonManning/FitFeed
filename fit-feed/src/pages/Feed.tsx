@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { getFollowingIds } from '../FirebaseDB';
+import { getFollowingIds, getSavedPostIds, savePost, unsavePost } from '../FirebaseDB';
 import { collection, onSnapshot, query, orderBy, doc, getDoc, type Firestore } from "firebase/firestore";
 import { db } from "../../firebase";
 import PostCard from "../components/PostCard";
@@ -47,6 +47,8 @@ export default function Feed({ uid }: FeedProps) {
   const [authorEmails, setAuthorEmails] = useState<Record<string, string>>({});
   const [tab, setTab] = useState<'foryou' | 'discover' | 'following'>('foryou');
   const [followingIds, setFollowingIds] = useState<string[]>([]);
+  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+  const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
   const isFirstLoadRef = useRef(true);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const rankDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -65,6 +67,7 @@ export default function Feed({ uid }: FeedProps) {
 
   useEffect(() => {
     getFollowingIds(uid).then(ids => setFollowingIds(ids));
+    getSavedPostIds(uid).then(ids => setSavedIds(new Set(ids)));
   }, [uid]);
 
   useEffect(() => {
@@ -145,6 +148,30 @@ export default function Feed({ uid }: FeedProps) {
     }
 
     setLikingIds(prev => {
+      const next = new Set(prev);
+      next.delete(post.id);
+      return next;
+    });
+  };
+
+  const handleToggleSave = async (post: Post) => {
+    if (savingIds.has(post.id)) return;
+    const wasSaved = savedIds.has(post.id);
+
+    setSavedIds(prev => {
+      const next = new Set(prev);
+      wasSaved ? next.delete(post.id) : next.add(post.id);
+      return next;
+    });
+    setSavingIds(prev => new Set(prev).add(post.id));
+
+    if (wasSaved) {
+      await unsavePost(uid, post.id);
+    } else {
+      await savePost(uid, post.id);
+    }
+
+    setSavingIds(prev => {
       const next = new Set(prev);
       next.delete(post.id);
       return next;
@@ -261,6 +288,9 @@ export default function Feed({ uid }: FeedProps) {
                   onLike={() => handleLike(post)}
                   liking={likingIds.has(post.id)}
                   onCommentAdded={handleCommentAdded}
+                  isSaved={savedIds.has(post.id)}
+                  onToggleSave={() => handleToggleSave(post)}
+                  saving={savingIds.has(post.id)}
                 />
               </div>
             ))}

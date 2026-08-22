@@ -175,7 +175,61 @@ StyleProfile.tsx, Insights.tsx, recommendation_engine.py.
    (outside this session's access) before it can be verified end-to-end in
    production. Revisit once Railway status changes.
 
-## Phase 3 — Implementation (STARTING: Saved outfits/collections)
+## Phase 3 — Implementation: Saved outfits/collections (COMPLETE, 2026-08-22)
+
+### What was built
+- **Data model**: new `saves/{uid}_{postId}` Firestore collection — mirrors
+  the existing `follows/{followerId}_{followingId}` ownership pattern.
+  Fields: `uid`, `postId`, `createdAt`. Private by design (no `savedBy` array
+  on posts, unlike `likedBy` — saves aren't a public signal).
+- **`FirebaseDB.ts`**: `savePost`, `unsavePost`, `isPostSaved`,
+  `getSavedPostIds` — same try/catch shape as the existing follow helpers.
+- **`firestore.rules`**: new `saves/{saveId}` match block — read/create/delete
+  all gated on `request.auth.uid == (resource|request.resource).data.uid`.
+  Purely additive, doesn't touch any existing rule; not a weakening.
+- **Bookmark toggle UI**: new outline/filled bookmark icon button (same
+  interaction pattern as the existing like button) added to `PostCard.tsx`
+  (feed) and `PostDetail.tsx`. Not added to Explore/Leaderboard/Insights
+  thumbnails — scoped to the two places where per-post actions already live.
+- **`Feed.tsx`**: fetches `getSavedPostIds` once on mount into a `Set`,
+  optimistic toggle handler mirroring the existing like-handling pattern.
+- **`Profile.tsx`**: new "My Posts" / "Saved" tab switcher above the grid
+  (Instagram-style), reusing the existing grid markup and `PostImage`
+  fallback component. Saved tab has its own empty state and an unsave
+  action on each tile.
+
+### Deploy
+`firebase deploy --only firestore:rules,hosting` — needed one retry (see
+below); succeeded on retry, live at https://fitfeed-67ee8.web.app.
+
+### End-to-end verification (production, throwaway diagnostic account,
+created and deleted within this session)
+All 4 checks passed via Playwright against the live site:
+1. Saving from the Feed (PostCard) toggles the bookmark to filled state.
+2. The saved post appears in Profile → Saved, confirmed to be the same post
+   (image src compared).
+3. Unsaving from the Saved tab removes it (count drops to 0).
+4. Saving from PostDetail **persists across a full page reload** — proves a
+   real Firestore write, not just client-side state — with **zero
+   permission-denied console errors**, confirming the new rules deployed
+   correctly.
+Visually confirmed via screenshot: filled purple bookmark icon on the feed
+card, and the saved post's photo + outfit name + category correctly
+rendered in the Saved tab.
+
+### Known friction this session (for future reference)
+`firebase deploy` (even hosting-only, previously approved and working
+earlier in this same session) was blocked twice by the permission
+classifier before a user-approved retry succeeded. Cause unclear — possibly
+tied to the mid-session `/model` switch. No workaround was needed once the
+user re-approved; flagging in case it recurs.
+
+### Not done / explicitly deferred
+- "Why this was recommended" and the empty-states redesign remain deferred
+  per user instruction (Railway still down for the former).
+- No collections/multiple saved lists — this is a single flat "Saved" list,
+  matching the scoped MVP described in the shortlist. Multi-collection
+  support (e.g. named boards) would be a natural follow-up if requested.
 
 ## Session log
 - **2026-08-22 (pass 1)**: Diagnosed both Phase 1 bugs + Railway status with
@@ -190,3 +244,10 @@ StyleProfile.tsx, Insights.tsx, recommendation_engine.py.
   live deployed site (desktop + mobile) and picked a 3-item shortlist.
   Stopped before Phase 3 per mission instructions, pending user confirmation
   of the "saved outfits/collections" pick.
+- **2026-08-22 (pass 3)**: Committed Phase 1/1B fixes to git. Implemented
+  saved outfits/collections end to end (new `saves` collection + rules,
+  FirebaseDB helpers, bookmark toggle on PostCard + PostDetail, My Posts/
+  Saved tabs on Profile). Deployed rules + hosting (one retry needed after
+  the classifier initially blocked `firebase deploy`). Verified all 4
+  end-to-end checks on production with a throwaway account, created and
+  deleted within this session. Phase 3 complete.

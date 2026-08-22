@@ -304,3 +304,50 @@ export const getFollowingIds = async (uid: string): Promise<string[]> => {
         return [];
     }
 };
+
+export const savePost = async (uid: string, postId: string): Promise<boolean> => {
+    try {
+        const saveId = `${uid}_${postId}`;
+        await setDoc(doc(db, 'saves', saveId), {
+            uid,
+            postId,
+            createdAt: new Date().toISOString(),
+        });
+        return true;
+    } catch (error) {
+        console.error('[savePost] Error:', error);
+        return false;
+    }
+};
+
+export const unsavePost = async (uid: string, postId: string): Promise<boolean> => {
+    try {
+        const saveId = `${uid}_${postId}`;
+        await deleteDoc(doc(db, 'saves', saveId));
+        return true;
+    } catch (error) {
+        console.error('[unsavePost] Error:', error);
+        return false;
+    }
+};
+
+export const isPostSaved = async (uid: string, postId: string): Promise<boolean> => {
+    try {
+        const saveId = `${uid}_${postId}`;
+        const snap = await getDoc(doc(db, 'saves', saveId));
+        return snap.exists();
+    } catch {
+        return false;
+    }
+};
+
+export const getSavedPostIds = async (uid: string): Promise<string[]> => {
+    try {
+        const q = query(collection(db, 'saves'), where('uid', '==', uid));
+        const snapshot = await getDocs(q);
+        return snapshot.docs.map(d => d.data().postId);
+    } catch (error) {
+        console.error('[getSavedPostIds] Error:', error);
+        return [];
+    }
+};

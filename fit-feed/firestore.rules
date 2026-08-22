@@ -34,5 +34,14 @@ service cloud.firestore {
         && request.auth.uid == resource.data.followerId;
     }
 
+    match /saves/{saveId} {
+      // Saves are private — only the owner can see or manage their own
+      allow read: if request.auth != null && request.auth.uid == resource.data.uid;
+      allow create: if request.auth != null
+        && request.auth.uid == request.resource.data.uid;
+      allow delete: if request.auth != null
+        && request.auth.uid == resource.data.uid;
+    }
+
   }
 }
