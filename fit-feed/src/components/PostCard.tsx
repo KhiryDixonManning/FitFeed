@@ -1,11 +1,12 @@
 import { useState, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auth } from '../../firebase';
-import { addComment, getComments, type Comment, type Post } from '../FirebaseDB';
+import { addComment, getComments, type Comment, type Post, type RankingFactors } from '../FirebaseDB';
 import { recordInteraction } from '../feedService';
 import ProfileAvatar from './ProfileAvatar';
 import PostImage from './PostImage';
 import { formatAuthor } from '../utils/formatAuthor';
+import { getRecommendationReasons } from '../utils/rankingExplanation';
 
 const hexToReadableName = (hex: string): string => {
   if (!hex) return 'Unknown';
@@ -57,6 +58,7 @@ interface PostCardProps {
   isSaved: boolean;
   onToggleSave: () => void;
   saving: boolean;
+  rankingFactors?: RankingFactors;
 }
 
 function PostCard({
@@ -70,9 +72,12 @@ function PostCard({
   isSaved,
   onToggleSave,
   saving,
+  rankingFactors,
 }: PostCardProps) {
   const navigate = useNavigate();
   const [showComments, setShowComments] = useState(false);
+  const [showWhy, setShowWhy] = useState(false);
+  const whyReasons = rankingFactors ? getRecommendationReasons(rankingFactors) : null;
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState('');
   const [loadingComments, setLoadingComments] = useState(false);
@@ -335,6 +340,33 @@ function PostCard({
           {post.commentsCount ?? 0}
         </button>
 
+        {/* Why this? — only present when the ranking engine returned an
+            explanation for this post (i.e. the For You tab with Railway up) */}
+        {whyReasons && (
+          <button
+            onClick={() => setShowWhy(s => !s)}
+            className={`flex items-center gap-1 text-xs p-2 rounded-lg hover:bg-[var(--accent-bg)] transition min-h-[44px] ${
+              showWhy ? 'text-[var(--accent)]' : 'text-gray-500 hover:text-[var(--accent)]'
+            }`}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth="1.5"
+              stroke="currentColor"
+              className="size-4"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M11.25 11.25l.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z"
+              />
+            </svg>
+            Why this?
+          </button>
+        )}
+
         {/* Save */}
         <button
           onClick={onToggleSave}
@@ -360,6 +392,23 @@ function PostCard({
           </svg>
         </button>
       </div>
+
+      {/* Why this? reveal */}
+      {showWhy && whyReasons && (
+        <div className="px-3 pb-3 -mt-1">
+          <div className="flex flex-wrap gap-1.5">
+            {whyReasons.map((reason, i) => (
+              <span
+                key={i}
+                className="flex items-center gap-1.5 bg-[var(--bg-secondary)] border border-[var(--border)] rounded-full px-2.5 py-1"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)] shrink-0" />
+                <span className="text-xs text-[var(--text-h)]">{reason}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Comment section */}
       {showComments && (

@@ -16,6 +16,21 @@ export interface User {
     createdAt?: string;
 }
 
+// Attached by the /rank endpoint only — explains why the ranking engine
+// placed a post where it did. Absent when the feed falls back to unranked
+// order (Railway unreachable) or for tabs that don't use ranked order.
+export interface RankingFactors {
+    contributions: {
+        communityConfidence: number;
+        trendingVelocity: number;
+        conversationBoost: number;
+        styleMatch: number;
+    };
+    freshnessTier: number;
+    ageHours: number;
+    matchedCategory: string | null;
+}
+
 export interface Post {
     id: string;
     authorId: string;
@@ -37,6 +52,7 @@ export interface Post {
     aestheticScores?: Record<string, number>;
     analyzed?: boolean;
     outfitName?: string;
+    _rankingFactors?: RankingFactors;
 }
 
 export interface Comment {

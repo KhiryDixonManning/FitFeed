@@ -89,13 +89,13 @@ def apply_diversity_penalty(scored_posts, penalty_factor=0.15):
     """
     category_count = {}
     result = []
-    for post, score in scored_posts:
+    for post, score, factors in scored_posts:
         category = post.get("category", "general")
         count = category_count.get(category, 0)
         penalty = penalty_factor * count
         adjusted_score = score * (1 - penalty)
         category_count[category] = count + 1
-        result.append((post, adjusted_score))
+        result.append((post, adjusted_score, factors))
     return result
 
 
@@ -104,6 +104,7 @@ def calculate_score(post, user_preferences):
     comments = post.get("commentsCount", 0)
     total_interactions = likes + comments
     age_hours = get_post_age_hours(post.get("createdAt"))
+    category = post.get("category", "general")
 
     # Wilson score — statistical confidence in engagement
     w_score = wilson_score(likes, max(total_interactions, 1))
@@ -123,6 +124,23 @@ def calculate_score(post, user_preferences):
     # Small exploration factor
     exploration = random.uniform(0, 0.05)
 
+    # Weighted contribution of each signal to the final score — surfaced to
+    # the frontend so it can explain, in plain language, why a post ranked
+    # where it did ("why this was recommended").
+    contributions = {
+        "communityConfidence": round(w_score * 0.35, 4),
+        "trendingVelocity": round(v_score * 0.25, 4),
+        "conversationBoost": round(ratio_boost * 0.10, 4),
+        "styleMatch": round(p_score * 0.20, 4),
+    }
+
+    factors = {
+        "contributions": contributions,
+        "freshnessTier": freshness,
+        "ageHours": round(age_hours, 1),
+        "matchedCategory": category if p_score > 0 else None,
+    }
+
     # Final weighted combination
     score = (
         (w_score * 0.35) +
@@ -132,13 +150,20 @@ def calculate_score(post, user_preferences):
         (exploration * 0.10)
     ) * freshness
 
-    return score
+    return score, factors
 
 
 def rank_posts(posts, user_preferences):
-    scored = [(post, calculate_score(post, user_preferences)) for post in posts]
+    scored = [
+        (post, *calculate_score(post, user_preferences))
+        for post in posts
+    ]
     scored = apply_diversity_penalty(scored)
-    return [post for post, score in sorted(scored, key=lambda x: x[1], reverse=True)]
+    ranked = sorted(scored, key=lambda x: x[1], reverse=True)
+    return [
+        {**post, "_rankingFactors": factors}
+        for post, score, factors in ranked
+    ]
 
 
 def get_trending(posts):

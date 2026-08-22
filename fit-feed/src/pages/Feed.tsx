@@ -291,6 +291,7 @@ export default function Feed({ uid }: FeedProps) {
                   isSaved={savedIds.has(post.id)}
                   onToggleSave={() => handleToggleSave(post)}
                   saving={savingIds.has(post.id)}
+                  rankingFactors={tab === 'foryou' ? post._rankingFactors : undefined}
                 />
               </div>
             ))}
