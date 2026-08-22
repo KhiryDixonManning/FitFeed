@@ -5,6 +5,7 @@ import { db, auth } from '../../firebase';
 import { type Post, toggleLike, getComments, addComment, type Comment, deletePost } from '../FirebaseDB';
 import { recordInteraction } from '../feedService';
 import { formatAuthor } from '../utils/formatAuthor';
+import PostImage from '../components/PostImage';
 
 const getStoreSuggestions = (aesthetic: string) => {
   const stores: Record<string, { name: string; url: string; description: string }[]> = {
@@ -296,7 +297,7 @@ export default function PostDetail() {
           className="relative cursor-zoom-in"
           onClick={() => setZoomedImage(true)}
         >
-          <img src={post.imageUrl} alt="outfit" className="w-full object-cover" loading="lazy" decoding="async" />
+          <PostImage src={post.imageUrl} alt="outfit" className="w-full min-h-40 object-cover" />
         </div>
       )}
 

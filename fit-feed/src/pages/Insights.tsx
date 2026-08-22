@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getPosts, type Post } from '../FirebaseDB';
 import { auth } from '../../firebase';
+import PostImage from '../components/PostImage';
 import {
   BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, Cell,
 } from 'recharts';
@@ -125,7 +126,7 @@ export default function Insights({ uid }: InsightsProps) {
             <div key={post.id} className="flex items-center gap-3">
               <span className="text-lg font-bold text-[var(--accent)] w-6 shrink-0">#{index + 1}</span>
               {post.imageUrl && (
-                <img
+                <PostImage
                   src={post.imageUrl}
                   alt="outfit"
                   className="w-12 h-12 object-cover rounded-lg shrink-0"

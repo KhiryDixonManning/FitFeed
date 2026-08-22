@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { getPosts, type Post } from '../FirebaseDB';
+import PostImage from '../components/PostImage';
 
 export default function Explore() {
   const [searchParams] = useSearchParams();
@@ -80,14 +81,11 @@ export default function Explore() {
               onClick={() => navigate(`/post/${post.id}`)}
               className="relative cursor-pointer rounded-xl overflow-hidden border border-[var(--border)] hover:border-[var(--accent)] transition"
             >
-              {post.imageUrl && (
-                <img
-                  src={post.imageUrl}
-                  alt="outfit"
-                  className="w-full aspect-square object-cover"
-                  loading="lazy"
-                />
-              )}
+              <PostImage
+                src={post.imageUrl}
+                alt="outfit"
+                className="w-full aspect-square object-cover"
+              />
               <div className="absolute top-2 right-2 bg-black/70 rounded-full px-2 py-0.5 flex items-center gap-1">
                 <span className="text-white text-xs">◎</span>
                 <span className="text-white text-xs font-semibold">

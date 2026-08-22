@@ -5,6 +5,7 @@ import { recordInteraction } from '../feedService';
 import { auth, db } from '../../firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { formatAuthor } from '../utils/formatAuthor';
+import PostImage from '../components/PostImage';
 
 export default function PublicProfile() {
   const { uid } = useParams<{ uid: string }>();
@@ -23,39 +24,45 @@ export default function PublicProfile() {
   const [followLoading, setFollowLoading] = useState(false);
 
   useEffect(() => {
-    if (!uid) return;
+    if (!uid) { setLoading(false); return; }
     const load = async () => {
+      // Any single failed read must never leave the page stuck on the spinner
       try {
-        const userDoc = await getDoc(doc(db, 'users', uid));
-        if (userDoc.exists()) {
-          const data = userDoc.data();
-          setEmail(data.email || '');
-          setUsername(data.username || '');
-          setAuthorPhotoURL(data.photoURL || '');
+        try {
+          const userDoc = await getDoc(doc(db, 'users', uid));
+          if (userDoc.exists()) {
+            const data = userDoc.data();
+            setEmail(data.email || '');
+            setUsername(data.username || '');
+            setAuthorPhotoURL(data.photoURL || '');
+          }
+        } catch {
+          // user doc may not exist for older accounts
         }
-      } catch {
-        // user doc may not exist for older accounts
+
+        const [allPosts, prefs, isFollowingUser, followerCountResult, followingCountResult] = await Promise.all([
+          getPosts(),
+          getUserPreferences(uid),
+          currentUid && currentUid !== uid ? isFollowing(currentUid, uid) : Promise.resolve(false),
+          getFollowerCount(uid),
+          getFollowingCount(uid),
+        ]);
+
+        setPosts(allPosts.filter(p => p.authorId === uid));
+
+        if (Object.keys(prefs).length > 0) {
+          const top = Object.entries(prefs).sort((a, b) => b[1] - a[1])[0][0];
+          setTopCategory(top);
+        }
+
+        setFollowing(isFollowingUser);
+        setFollowerCount(followerCountResult);
+        setFollowingCount(followingCountResult);
+      } catch (err) {
+        console.error('[PublicProfile] Failed to load:', err);
+      } finally {
+        setLoading(false);
       }
-
-      const [allPosts, prefs, isFollowingUser, followerCountResult, followingCountResult] = await Promise.all([
-        getPosts(),
-        getUserPreferences(uid),
-        currentUid && currentUid !== uid ? isFollowing(currentUid, uid) : Promise.resolve(false),
-        getFollowerCount(uid),
-        getFollowingCount(uid),
-      ]);
-
-      setPosts(allPosts.filter(p => p.authorId === uid));
-
-      if (Object.keys(prefs).length > 0) {
-        const top = Object.entries(prefs).sort((a, b) => b[1] - a[1])[0][0];
-        setTopCategory(top);
-      }
-
-      setFollowing(isFollowingUser);
-      setFollowerCount(followerCountResult);
-      setFollowingCount(followingCountResult);
-      setLoading(false);
     };
     load();
   }, [uid, currentUid]);
@@ -157,9 +164,7 @@ export default function PublicProfile() {
               onClick={() => navigate(`/post/${post.id}`)}
               className="border border-[var(--border)] rounded-lg overflow-hidden cursor-pointer hover:border-[var(--accent)] transition-colors"
             >
-              {post.imageUrl && (
-                <img src={post.imageUrl} alt="outfit" className="w-full aspect-square object-cover" loading="lazy" decoding="async" />
-              )}
+              <PostImage src={post.imageUrl} alt="outfit" className="w-full aspect-square object-cover" />
               <div className="p-3">
                 <p className="text-sm text-[var(--text-h)] mb-1 truncate">{post.outfitName || post.content}</p>
                 {post.category && (

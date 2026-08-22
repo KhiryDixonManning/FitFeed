@@ -6,6 +6,7 @@ import type { Post } from '../FirebaseDB';
 import { recordInteraction } from '../feedService';
 import { auth, db } from '../../firebase';
 import StyleProfile from '../components/StyleProfile';
+import PostImage from '../components/PostImage';
 import { useNavigate } from 'react-router-dom';
 import { seedAllPosts, removeAllDemoComments } from '../utils/demoComments';
 
@@ -18,6 +19,8 @@ export default function Profile({ uid }: ProfileProps) {
   const [posts, setPosts] = useState<Post[]>([]);
   const [userPreferences, setUserPreferences] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
   const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
   const [followerCount, setFollowerCount] = useState(0);
   const [followingCount, setFollowingCount] = useState(0);
@@ -33,41 +36,47 @@ export default function Profile({ uid }: ProfileProps) {
 
   useEffect(() => {
     const load = async () => {
-      const allPosts = await getPosts();
-      const myPosts = allPosts.filter(p => p.authorId === uid);
-      setPosts(myPosts);
+      // Any single failed read must never leave the page stuck on the spinner
+      try {
+        const allPosts = await getPosts();
+        const myPosts = allPosts.filter(p => p.authorId === uid);
+        setPosts(myPosts);
 
-      const [prefs, fCount, fgCount] = await Promise.all([
-        getUserPreferences(uid),
-        getFollowerCount(uid),
-        getFollowingCount(uid),
-      ]);
-      setUserPreferences(prefs);
-      setFollowerCount(fCount);
-      setFollowingCount(fgCount);
+        const [prefs, fCount, fgCount] = await Promise.all([
+          getUserPreferences(uid),
+          getFollowerCount(uid),
+          getFollowingCount(uid),
+        ]);
+        setUserPreferences(prefs);
+        setFollowerCount(fCount);
+        setFollowingCount(fgCount);
 
-      // Load username and avatar from users collection
-      if (auth.currentUser) {
-        const userDoc = await getDoc(doc(db, 'users', auth.currentUser.uid));
-        if (userDoc.exists()) {
-          const data = userDoc.data();
-          setUsername(data.username || '');
-          setPhotoURL(data.photoURL || '');
+        // Load username and avatar from users collection
+        if (auth.currentUser) {
+          const userDoc = await getDoc(doc(db, 'users', auth.currentUser.uid));
+          if (userDoc.exists()) {
+            const data = userDoc.data();
+            setUsername(data.username || '');
+            setPhotoURL(data.photoURL || '');
+          }
+
+          // Backfill user doc for older accounts
+          setDoc(doc(db, 'users', auth.currentUser.uid), {
+            uid: auth.currentUser.uid,
+            email: auth.currentUser.email,
+            displayName: auth.currentUser.displayName || '',
+            createdAt: new Date().toISOString(),
+          }, { merge: true }).catch(console.error);
         }
-
-        // Backfill user doc for older accounts
-        setDoc(doc(db, 'users', auth.currentUser.uid), {
-          uid: auth.currentUser.uid,
-          email: auth.currentUser.email,
-          displayName: auth.currentUser.displayName || '',
-          createdAt: new Date().toISOString(),
-        }, { merge: true }).catch(console.error);
+      } catch (err) {
+        console.error('[Profile] Failed to load:', err);
+        setLoadError(true);
+      } finally {
+        setLoading(false);
       }
-
-      setLoading(false);
     };
     load();
-  }, [uid]);
+  }, [uid, retryKey]);
 
   const saveUsername = async () => {
     if (!usernameInput.trim()) return;
@@ -127,6 +136,20 @@ export default function Profile({ uid }: ProfileProps) {
   };
 
   if (loading) return <div className="p-8 text-center text-[var(--text)]">Loading profile...</div>;
+
+  if (loadError) {
+    return (
+      <div className="p-8 text-center flex flex-col items-center gap-3">
+        <p className="text-[var(--text)]">Couldn't load your profile. Check your connection and try again.</p>
+        <button
+          onClick={() => { setLoadError(false); setLoading(true); setRetryKey(k => k + 1); }}
+          className="bg-[var(--accent)] text-white rounded-lg px-4 py-2 text-sm font-medium hover:opacity-90 transition"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-2xl mx-auto py-6 px-0 md:px-6 pb-24 md:pb-6">
@@ -244,9 +267,7 @@ export default function Profile({ uid }: ProfileProps) {
                 className="border border-[var(--border)] rounded-lg overflow-hidden cursor-pointer hover:border-[var(--accent)] transition-colors"
                 onClick={() => navigate(`/post/${post.id}`)}
               >
-                {post.imageUrl && (
-                  <img src={post.imageUrl} alt="outfit" className="w-full aspect-square object-cover" loading="lazy" decoding="async" />
-                )}
+                <PostImage src={post.imageUrl} alt="outfit" className="w-full aspect-square object-cover" />
                 <div className="p-3">
                   <p className="text-sm text-[var(--text-h)] mb-1 truncate">{post.content}</p>
                   {post.category && (

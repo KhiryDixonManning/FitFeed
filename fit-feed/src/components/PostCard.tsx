@@ -4,6 +4,7 @@ import { auth } from '../../firebase';
 import { addComment, getComments, type Comment, type Post } from '../FirebaseDB';
 import { recordInteraction } from '../feedService';
 import ProfileAvatar from './ProfileAvatar';
+import PostImage from './PostImage';
 import { formatAuthor } from '../utils/formatAuthor';
 
 const hexToReadableName = (hex: string): string => {
@@ -106,19 +107,11 @@ function PostCard({
         className="overflow-hidden cursor-pointer bg-gray-100 relative"
         onClick={() => navigate(`/post/${post.id}`)}
       >
-        {post.imageUrl ? (
-          <img
-            src={post.imageUrl}
-            alt={post.content ?? 'outfit'}
-            className="w-full aspect-square object-cover"
-            loading="lazy"
-            decoding="async"
-          />
-        ) : (
-          <div className="w-full aspect-square flex items-center justify-center text-gray-400 text-sm">
-            No image
-          </div>
-        )}
+        <PostImage
+          src={post.imageUrl}
+          alt={post.content ?? 'outfit'}
+          className="w-full aspect-square object-cover"
+        />
         {/* Aura Score Badge */}
         <div className="absolute top-2 right-2 bg-black/80 backdrop-blur-sm rounded-full px-2 py-1 flex items-center gap-1">
           <span className="text-white text-xs">◎</span>

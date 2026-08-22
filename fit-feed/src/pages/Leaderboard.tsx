@@ -5,6 +5,7 @@ import { db } from '../../firebase';
 import { getTrendingFeed } from '../feedService';
 import { type Post } from '../FirebaseDB';
 import { CATEGORIES } from '../constants/categories';
+import PostImage from '../components/PostImage';
 
 export default function Leaderboard() {
   const navigate = useNavigate();
@@ -110,11 +111,10 @@ export default function Leaderboard() {
                 {/* Thumbnail */}
                 {post.imageUrl && (
                   <div className="relative shrink-0">
-                    <img
+                    <PostImage
                       src={post.imageUrl}
                       alt="outfit"
                       className="w-16 h-16 sm:w-20 sm:h-20 object-cover"
-                      loading="lazy"
                     />
                     <div className="absolute top-1 right-1 bg-black/80 backdrop-blur-sm rounded-full px-1.5 py-0.5 flex items-center gap-0.5">
                       <span className="text-white text-[9px]">◎</span>
