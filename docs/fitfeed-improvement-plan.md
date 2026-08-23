@@ -1,9 +1,10 @@
 # FitFeed Improvement Plan — persistent session context
 
 > Read this first each session. Don't re-derive anything recorded here.
-> Last updated: 2026-08-22 (Phase 1 + 1B VERIFIED on production. Phase 2 audit
-> complete. Stopped before Phase 3 per mission instructions — awaiting nothing,
-> ready to proceed next session/turn).
+> Last updated: 2026-08-23. Phase 1, 1B, Phase 3 (saved outfits), and
+> Phase 3b (why-recommended) are all COMPLETE and VERIFIED on production.
+> Nothing is currently blocked. Empty-states redesign (from the Phase 2
+> shortlist) remains the one undone item, not started, awaiting go-ahead.
 
 ## Phase 1 / 1B — VERIFIED FIXED (2026-08-22, second pass)
 - User fixed Firebase billing. Re-ran `diagnose_posts.py`: all sampled images
@@ -230,8 +231,7 @@ user re-approved; flagging in case it recurs.
   matching the scoped MVP described in the shortlist. Multi-collection
   support (e.g. named boards) would be a natural follow-up if requested.
 
-## Phase 3b — "Why this was recommended" (2026-08-22, CODE COMPLETE,
-## BLOCKED ON RAILWAY REDEPLOY)
+## Phase 3b — "Why this was recommended" (COMPLETE and VERIFIED, 2026-08-23)
 
 ### Railway re-verification (done first, as requested)
 User redeployed Railway. Confirmed directly:
@@ -279,24 +279,52 @@ Build passes (`npm run build`). Committed:
 `36eadc4 Surface why each post was ranked into the feed` (rebased onto a
 README commit made directly on GitHub since the last push — no conflicts).
 
-### BLOCKED: not deployed to Railway
-Pushed to `origin/main` (you confirmed you wanted this route, expecting
-Railway to auto-deploy from GitHub). Polled `POST /rank` for ~3.5 minutes
-afterward — it still returns the old (no `_rankingFactors`) response shape,
-so **the push did not trigger a Railway redeploy** within that window. The
-service itself is healthy and responding correctly with the old code, so
-this isn't a crash — just stale code. Two likely explanations: Railway's
-GitHub integration isn't actually connected/enabled for this repo, or it's
-watching a different branch/root directory. Needs you to either confirm the
-GitHub integration is live (and give it more time) or trigger a manual
-redeploy from the Railway dashboard / `railway up`.
+### Railway deploy — resolved
+The GitHub push alone did not trigger a Railway redeploy (confirmed stale
+code for several minutes after pushing, and my Railway CLI session stayed
+unauthenticated throughout — expired token, `railway login`/`railway ssh`
+both rejected with `invalid_grant`, so I could not SSH in or inspect the
+dashboard config myself). Root cause, per the user: **Root Directory
+wasn't set to `python-backend`** in the Railway service's Source settings
+(this is a monorepo, and Railway needs to be told the backend lives in a
+subfolder, not the repo root). User set Root Directory correctly and
+triggered a manual deploy from the dashboard. Verified directly against the
+live endpoint (`curl -X POST .../rank`): `_rankingFactors` now appears with
+sensible values (e.g. a post matching a test user's `streetwear` preference
+showed `styleMatch: 0.16`, `communityConfidence`, `trendingVelocity`,
+`freshnessTier` all populated).
 
-**Next step for whoever picks this up**: once Railway is confirmed running
-the new code (`curl -X POST .../rank` with a dummy post should return
-`_rankingFactors` in the response), do a live Playwright pass on the For
-You tab: confirm the "Why this?" button appears, click it, confirm the
-chips render sensible reasons, and confirm it's absent on Discover/Following
-and absent entirely if the fallback (unranked) path is hit.
+### Frontend deploy + full Playwright verification (production, throwaway
+account created and deleted within this session)
+Built and deployed (`firebase deploy --only hosting`) twice: once with the
+feature, and once more after adding `data-testid="why-this-button"` /
+`data-testid="why-reasons"` to PostCard — the reveal chips reuse the same
+Tailwind classes as the pre-existing Aesthetic Composition chips, so a
+class-based Playwright selector was matching across every card on the page
+instead of just the clicked one; test ids fixed that. All checks passed
+precisely scoped:
+- In-browser `fetch` to `/rank` confirmed `_rankingFactors` present in the
+  actual response the app receives (not just via curl).
+- **For You tab**: all 49 posts rendered a "Why this?" button (ranking
+  succeeded for the whole feed). Clicked 3 buttons independently; each
+  revealed exactly the expected reason — "Loved by the community" — scoped
+  correctly to its own card with zero cross-contamination. (This diagnostic
+  account had no interaction history, so `styleMatch` was 0 for every post
+  as expected — only `communityConfidence`, the highest-weighted signal,
+  cleared the display threshold. Expected behavior, not a bug.)
+- **Discover tab**: 0 "Why this?" buttons — correctly absent (chronological
+  order, not ranked).
+- **Following tab**: 0 "Why this?" buttons — correctly absent (social order,
+  not ranked).
+- Zero console errors throughout.
+Visually confirmed via screenshot: the toggle sits inline with
+like/comment/save, matches the app's icon-button style, and the reveal chip
+matches the existing chip visual language (colored dot + pill) — no new
+"dashboard" component introduced, consistent with the Phase 2 audit's
+identity guidance.
+
+Commits: `36eadc4` (feature), `52cf5a2` (test ids) — both pushed to
+`origin/main`.
 
 ## Session log
 - **2026-08-22 (pass 1)**: Diagnosed both Phase 1 bugs + Railway status with
@@ -328,3 +356,15 @@ and absent entirely if the fallback (unranked) path is hit.
   Frontend deploy still pending too (holding off until backend confirmed
   live, so both ship together). Blocked on the user confirming/triggering
   the Railway redeploy.
+- **2026-08-23 (pass 5)**: User's manual Railway deploy still showed stale
+  code on first re-check; investigated via `railway ssh`/`railway whoami`
+  (both failed, same expired-token issue) so couldn't inspect the service
+  directly. User found and fixed the actual cause themselves (Root
+  Directory wasn't set to `python-backend` in Railway's Source settings)
+  and redeployed. Re-verified live: `_rankingFactors` now present with
+  sensible values. Deployed the matching frontend, added Playwright test
+  ids after a selector collision with existing chip styling, redeployed,
+  and ran full end-to-end verification — For You shows correct per-post
+  reasons, Discover/Following correctly show none, zero console errors.
+  Committed and pushed both commits. Phase 3b complete. Stopping here as
+  instructed — no further phases started.
