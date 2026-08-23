@@ -344,6 +344,7 @@ function PostCard({
             explanation for this post (i.e. the For You tab with Railway up) */}
         {whyReasons && (
           <button
+            data-testid="why-this-button"
             onClick={() => setShowWhy(s => !s)}
             className={`flex items-center gap-1 text-xs p-2 rounded-lg hover:bg-[var(--accent-bg)] transition min-h-[44px] ${
               showWhy ? 'text-[var(--accent)]' : 'text-gray-500 hover:text-[var(--accent)]'
@@ -395,7 +396,7 @@ function PostCard({
 
       {/* Why this? reveal */}
       {showWhy && whyReasons && (
-        <div className="px-3 pb-3 -mt-1">
+        <div className="px-3 pb-3 -mt-1" data-testid="why-reasons">
           <div className="flex flex-wrap gap-1.5">
             {whyReasons.map((reason, i) => (
               <span
