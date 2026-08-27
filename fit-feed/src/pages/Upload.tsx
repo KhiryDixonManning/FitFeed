@@ -7,6 +7,16 @@ import { addPost } from '../FirebaseDB';
 import { CATEGORIES } from '../constants/categories';
 import { PYTHON_API } from '../config';
 
+// Best-effort status write so the detail page can be honest about a
+// failed/never-finished analysis instead of shimmering forever.
+async function markAnalysisFailed(postId: string): Promise<void> {
+  try {
+    await updateDoc(doc(db, 'posts', postId), { analysisStatus: 'failed' });
+  } catch (err) {
+    console.error('[triggerAnalysis] Could not mark failed:', err);
+  }
+}
+
 async function triggerAnalysis(postId: string, imageUrl: string): Promise<void> {
   console.log('[triggerAnalysis] Starting for postId:', postId, 'imageUrl:', imageUrl);
   try {
@@ -33,16 +43,20 @@ async function triggerAnalysis(postId: string, imageUrl: string): Promise<void> 
           styleNotes: analysis.styleNotes || null,
           aestheticScores: analysis.aestheticScores || {},
           analyzed: true,
+          analysisStatus: 'complete',
         });
         console.log('[triggerAnalysis] Firestore updated successfully');
       } else {
-        console.warn('[triggerAnalysis] analyzed=false, not writing to Firestore');
+        console.warn('[triggerAnalysis] analyzed=false, not writing analysis');
+        await markAnalysisFailed(postId);
       }
     } else {
       console.error('[triggerAnalysis] Bad response from analyze endpoint:', response.status);
+      await markAnalysisFailed(postId);
     }
   } catch (err) {
     console.error('[triggerAnalysis] Failed:', err);
+    await markAnalysisFailed(postId);
   }
 }
 
@@ -118,13 +132,16 @@ export default function Upload({ uid }: UploadProps) {
         likesCount: 0,
         commentsCount: 0,
         likedBy: [],
+        analysisStatus: 'pending',
       });
 
-      navigate('/');
-
-      // Fire-and-forget: analyze outfit after redirect, never block the user
       if (result) {
+        // Land on the new post so the analysis composes in front of the
+        // author; the analyze call itself stays fire-and-forget.
         triggerAnalysis(result.id, imageUrl);
+        navigate(`/post/${result.id}`, { state: { justPublished: true } });
+      } else {
+        navigate('/');
       }
     } catch (err: any) {
       setError(err.message || 'Failed to publish. Please try again.');

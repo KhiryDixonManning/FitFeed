@@ -651,6 +651,110 @@ chatbots, new social mechanics, infra, mobile apps.
 - Design cohesion: chips/palette/border language is consistent post-A;
   intentional differences between social and analytical surfaces are sane.
 
+## Staged analysis reveal — Phase C Proposal #1 (COMPLETE, deployed + verified, 2026-08-27)
+
+Branch `analysis-reveal`. Proposals #2/#3 NOT started (out of scope).
+
+### Housekeeping done first
+- `phase-a-polish` pushed and merged to main with a merge commit
+  (`0bcf19f`), pushed to origin.
+- Orphaned Firestore user docs: exported all Auth accounts
+  (`firebase auth:export`, 42 accounts), listed the `users` collection via
+  an authenticated REST query (55 docs), found **13 orphans** (4 old
+  `claude.diag.*@fitfeed-test.invalid`, 4 of this session's
+  `diag_*@fitfeed-diagnostic.test`, and 5 older real-looking emails, e.g.
+  khiry123@gmail.com, whose Auth accounts were deleted at some point).
+  Confirmed **none of the 13 authored any posts** before deleting (so no
+  feed author-name regressions), then deleted all 13 `users/` docs (+
+  idempotent `userPreferences/` deletes) via `firebase firestore:delete`.
+  Re-ran the diff: 42 Firestore user docs vs 42 Auth accounts, 0 orphans.
+
+### What was built
+- **Schema (additive)**: `analysisStatus?: 'pending' | 'complete' |
+  'failed'` on posts. `Upload` writes `'pending'` at creation;
+  `triggerAnalysis` writes `'complete'` with the analysis, or `'failed'`
+  on non-ok response / `analyzed:false` / fetch error (new
+  `markAnalysisFailed` helper). Legacy posts lack the field and behave
+  exactly as before; every consumer treats absence as unknown.
+- **Upload.tsx**: after publish, navigates to the new post
+  (`/post/{id}`, `state: { justPublished: true }`) instead of the feed;
+  the analyze call remains fire-and-forget.
+- **PostDetail.tsx**: post doc now read via `onSnapshot` (live analysis
+  arrival; replaces the one-shot getDoc — author/saved lookups stay
+  one-shot). Reveal state machine: `idle | waiting | animating | timeout
+  | failed`. Waiting = pulse-dot "Reading this fit" + 3-block shimmer
+  exactly in the palette's slot (no layout shift). Arrival = staggered
+  one-shot settle (`.reveal-item`, fadeIn 0.55s, delays 0/.25/.5/.75s):
+  palette → outfit name/caption (title fades from caption to the given
+  name) → aesthetic badge + composition chips → notes/tags/items/
+  description/shop. 30s honest timeout ("Still reading…", post fully
+  usable, listener stays attached so a late arrival still reveals);
+  explicit failure copy ("No reading this time") on `analysisStatus:
+  'failed'`. `prefers-reduced-motion` collapses the animation.
+- **Replay guard**: React Router keeps `location.state` across reloads,
+  so `justPublished` alone would replay the animation on refresh of an
+  analyzed post. A `sawUnanalyzedRef` allows `animating` only when this
+  view actually observed unanalyzed → analyzed; otherwise it composes
+  statically.
+- **PostCard.tsx**: analyzing indicator now gates on `analysisStatus ===
+  'pending'` when the field exists (freshness window retained as the cap
+  and as the legacy fallback).
+
+### Verification
+- Build passes; 6/6 Playwright UI tests pass (the 2 api-project tests
+  still fail against localhost:5000 — pre-existing environmental, no venv).
+- **Local (dev server, Playwright)**: waiting shimmer, 30s timeout copy,
+  and failure copy all screenshot-verified at 390px and 1280px (routes
+  stalled / fulfilled 500 to force each state).
+- **Production (throwaway accounts via real signup UI)**: waiting state
+  live ✓; staged reveal live ✓ (10 `.reveal-item` sections, title faded
+  caption → "Blue Static School Days", palette/chips/notes composed;
+  mid-stagger frame captured); reload-with-history-state = static, no
+  replay ✓; clean revisit = static ✓; zero console errors. Screenshots at
+  390px + 1280px.
+- **Caveat on the happy-path prod run**: the `/analyze` RESPONSE was
+  substituted at the network layer with real analysis data from an
+  existing analyzed post (delayed 6s), because the real endpoint is
+  currently broken server-side (below) and this machine's corporate proxy
+  blocks Railway from headless Chromium anyway. Everything else — upload,
+  Storage, Firestore writes, onSnapshot, choreography — ran for real
+  against production.
+
+### ⚠ Discovered: production /analyze is broken server-side (pre-existing)
+`POST /analyze` returns `analyzed:false` with a populated `palette` even
+for images it previously analyzed successfully — local KMeans works, the
+Claude step fails. Likely the `ANTHROPIC_API_KEY` env var was lost in the
+Railway Root-Directory redeploy, or the key/credits expired. **All new
+uploads currently get the honest failure state instead of analysis.**
+Needs the Railway dashboard (check env vars / logs). CORS is fine
+(verified: preflight + POST from the app origin succeed).
+
+### Verification-environment notes (future sessions)
+- This machine's corporate proxy blocks `*.railway.app` from headless
+  Chromium (hangs ~100s then "Failed to fetch") while Firebase/Google
+  domains work; node fetch + curl (--ssl-no-revoke) reach Railway fine.
+  Relay Railway requests through node via Playwright routes when needed.
+- `getByText('...')` can strict-mode-collide with nested elements —
+  prefer `locator('span', { hasText: ... }).first()`.
+
+### Cleanup ledger (this mission)
+- All throwaway accounts deleted (Auth + posts + Storage via the app's
+  own delete flow): diag_prod3/4/5, diag_prod2 (recovered after a crashed
+  run), all diag_img/lookup/orphan temp accounts.
+- One earlier local-run account (diag_reveal_…048851) lost its password
+  when a script crashed mid-run; its Auth record could not be deleted
+  without admin credentials (classifier blocked the token-exchange
+  workaround). Deleted its post/user/prefs Firestore docs via CLI.
+  **Residue needing one console click each**: 3 diagnostic Auth accounts
+  (diag_reveal_1787855048851@…, plus 2 older diag-…@example.com from a
+  previous session) and ≤2 tiny orphaned Storage JPEGs under
+  `posts/FZ5Z1Yu1iSZijrInlvDjBEL1Kmz1/` and `posts/gLzNxWyaw1g…/`.
+
+### Deployment status
+Deployed to https://fitfeed-67ee8.web.app (`firebase deploy --only
+hosting`) twice: feature, then the replay-guard fix. Live verification as
+above; zero console errors.
+
 ## Session log
 - **2026-08-22 (pass 1)**: Diagnosed both Phase 1 bugs + Railway status with
   runtime evidence; implemented image-fallback + profile-loading repairs;

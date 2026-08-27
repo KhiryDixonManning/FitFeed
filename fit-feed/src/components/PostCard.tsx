@@ -178,11 +178,15 @@ function PostCard({
         </div>
       )}
 
-      {/* Analyzing indicator — only for fresh posts whose analysis is still
-          plausibly in flight; old never-analyzed posts show nothing instead
-          of a permanent "Analyzing..." lie. The palette-shaped shimmer keeps
-          the layout stable for when the real color cards arrive. */}
+      {/* Analyzing indicator — gate on the explicit analysisStatus when the
+          post has one (new posts write pending/complete/failed); legacy
+          posts without the field fall back to the freshness window so old
+          never-analyzed posts don't show a permanent "Analyzing..." lie.
+          The age cap also bounds a stuck 'pending' (client died mid-flow).
+          The palette-shaped shimmer keeps the layout stable for when the
+          real color cards arrive. */}
       {!post.analyzed && !post.palette?.length &&
+        (post.analysisStatus ? post.analysisStatus === 'pending' : true) &&
         Date.now() - new Date(post.createdAt).getTime() < 10 * 60 * 1000 && (
         <>
           <div className="flex items-center gap-1.5 px-3 mt-2">

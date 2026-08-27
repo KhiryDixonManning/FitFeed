@@ -52,6 +52,10 @@ export interface Post {
     styleNotes?: string;
     aestheticScores?: Record<string, number>;
     analyzed?: boolean;
+    // Additive (2026-08-27): written on NEW posts only — 'pending' at
+    // creation, 'complete'/'failed' after the analysis round-trip. Legacy
+    // posts lack the field; every consumer must treat absence as unknown.
+    analysisStatus?: 'pending' | 'complete' | 'failed';
     outfitName?: string;
     _rankingFactors?: RankingFactors;
 }
