@@ -675,6 +675,9 @@ main 2026-08-27** so main matches what production serves. Proposals
   feed author-name regressions), then deleted all 13 `users/` docs (+
   idempotent `userPreferences/` deletes) via `firebase firestore:delete`.
   Re-ran the diff: 42 Firestore user docs vs 42 Auth accounts, 0 orphans.
+  (That sweep used a fresh export and was valid; some LATER re-checks in
+  the same session reused it while stale — corrected counts are in
+  "Firestore account-hygiene state — CORRECTED" below.)
 
 ### What was built
 - **Schema (additive)**: `analysisStatus?: 'pending' | 'complete' |
@@ -754,12 +757,17 @@ got the honest failure state instead of analysis.
   when a script crashed mid-run; its Auth record could not be deleted
   without admin credentials (classifier blocked the token-exchange
   workaround). Deleted its post/user/prefs Firestore docs via CLI.
-  **Residue (user clearing via Firebase Console → Authentication → search
-  "diag"; Auth-only, so the 42=42 user-doc count is unaffected)**: 3
-  diagnostic Auth accounts
-  (diag_reveal_1787855048851@…, plus 2 older diag-…@example.com from a
-  previous session) and ≤2 tiny orphaned Storage JPEGs under
+  **Residue for the user to clear (Firebase Console → Authentication →
+  search "diag")**: 3 diagnostic Auth accounts —
+  `diag_reveal_1787855048851@fitfeed-diagnostic.test`
+  (uid FZ5Z1Yu1iSZijrInlvDjBEL1Kmz1),
+  `diag-1784414583419@example.com` (uid c41eOVFvDoTvyPS6pA2ZQwMpbAZ2), and
+  `diag-1784414461209@example.com` (uid jQ6UbNJRYTN7mAiW7o3R9oAngkm1) —
+  plus ≤2 tiny orphaned Storage JPEGs under
   `posts/FZ5Z1Yu1iSZijrInlvDjBEL1Kmz1/` and `posts/gLzNxWyaw1g…/`.
+  All 3 now have **zero Firestore footprint** (see the count correction in
+  the /analyze section below), so deleting them in the console leaves
+  nothing behind.
 
 ### Deployment status
 Deployed to https://fitfeed-67ee8.web.app (`firebase deploy --only
@@ -817,10 +825,38 @@ https://platform.claude.com/docs/en/about-claude/models/overview.
   (Firestore doc + Storage image + comments), Auth account deleted via
   REST, and the app-created `users/{uid}` docs for ALL of today's
   throwaways (this run + the 5 earlier prod-run leftovers) deleted via
-  CLI. Final diff: 42 Auth accounts = 42 user docs, 0 orphans.
+  CLI.
   (Signup creates a users doc the REST account-delete doesn't remove —
   future sessions: always follow account deletion with a users-doc
   delete.)
+
+### Firestore account-hygiene state — CORRECTED (2026-08-27, after merge)
+The earlier "42 Auth accounts = 42 user docs" line was measured against a
+**stale `auth:export` on disk** (orphans.mjs re-read an export taken
+before several later accounts existed). Re-verified with a fresh export:
+- **43 Auth accounts, 40 `users` docs, 0 orphaned docs.** No doc lacks a
+  live Auth account. (The deletions made under the stale export were all
+  verified diag-email accounts authoring 0 posts, so nothing real was
+  removed — checked against the printed uid/email list at the time.)
+- The stale-export claim also mis-stated the 3 leftover Auth accounts as
+  "Auth-only": **2 of them still had `users` docs**, so deleting the
+  accounts would have created 2 fresh orphans. Both authored 0 posts;
+  their `users`/`userPreferences` docs are now deleted, so all 3 have zero
+  Firestore footprint and the user's console deletion leaves 40 = 40.
+- **Lesson for future sessions**: always re-run `firebase auth:export`
+  immediately before an orphan diff — never reuse an export from earlier
+  in the session — and check for a `users` doc before assuming an Auth
+  record is "Auth-only".
+
+### Repo state after merge (2026-08-27)
+`analysis-reveal` merged into main via merge commit `aed09f5` (pushed);
+`git log main..analysis-reveal` and `main..phase-a-polish` are both empty.
+Verified main matches production, not just by commit graph: a fresh
+`npm run build` from merged main produces an entry bundle **byte-identical
+to the live one** (md5 `8073d6bb…`, 252,483 bytes) with the same chunk set
+— the filename hash differs (`index-BtXjratK.js` local vs
+`index-StqX4Lwb.js` live) but the code does not, so no redeploy was
+needed. Build + 6/6 Playwright UI tests green on the merged tree.
 
 ## Session log
 - **2026-08-22 (pass 1)**: Diagnosed both Phase 1 bugs + Railway status with
