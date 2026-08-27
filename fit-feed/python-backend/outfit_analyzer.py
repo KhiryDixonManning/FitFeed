@@ -24,6 +24,11 @@ if not api_key:
 else:
     print(f"ANTHROPIC_API_KEY loaded: {api_key[:8]}...")
 
+# Dateless model IDs (4.6 generation onward) are pinned snapshots and can be
+# retired eventually — if analysis starts failing with a model 404, check
+# https://platform.claude.com/docs/en/about-claude/models/overview
+CLAUDE_MODEL = "claude-sonnet-5"
+
 
 def extract_color_palette_from_bytes(image_bytes: bytes, n_colors: int = 5) -> list:
     """
@@ -86,7 +91,7 @@ def analyze_outfit_with_claude_bytes(image_bytes: bytes) -> dict:
 
         client = anthropic.Anthropic()
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=CLAUDE_MODEL,
             max_tokens=1024,
             messages=[
                 {
@@ -140,6 +145,14 @@ For colors: analyze ONLY the clothing and accessories being worn. Ignore backgro
         print(f"[claude] Raw response: {raw}")
         return json.loads(raw)
 
+    except anthropic.NotFoundError as e:
+        # A 404 from the Messages API means the model ID no longer exists.
+        # This exact failure mode silently broke analysis once (retired
+        # claude-sonnet-4-20250514) — make it unmissable in the logs.
+        print(f"MODEL RETIRED OR INVALID: {CLAUDE_MODEL} — update CLAUDE_MODEL "
+              f"in outfit_analyzer.py (see /docs/en/about-claude/models/overview). "
+              f"API said: {e}")
+        return {}
     except json.JSONDecodeError as e:
         print(f"Claude returned invalid JSON: {e}")
         return {}
