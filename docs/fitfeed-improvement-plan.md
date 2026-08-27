@@ -651,6 +651,63 @@ chatbots, new social mechanics, infra, mobile apps.
 - Design cohesion: chips/palette/border language is consistent post-A;
   intentional differences between social and analytical surfaces are sane.
 
+## /analyze outage — root cause + fix (RESOLVED, 2026-08-27)
+
+Note: the staged-analysis-reveal feature and its verification record live
+on branch `analysis-reveal` (commit 1176920, deployed to hosting); this
+section covers the backend outage found during that work.
+
+### Root cause: retired Claude model string
+`outfit_analyzer.py` called `model="claude-sonnet-4-20250514"`. That model
+has been retired; the Messages API returns `404 not_found_error`, the
+generic `except` printed only "Claude analysis failed", and every new
+upload silently fell back to `analyzed:false` for an unknown period.
+Confirmed by the user in Railway runtime logs (key loaded fine — the
+earlier API-key suspicion was wrong; the key replacement was a red
+herring). Timing signature for the future: /analyze completing in ~4s
+with palette populated but `analyzed:false` = KMeans ran, Claude call
+failed fast.
+
+### Fix (commit 4ac4418 on main)
+- Model → `claude-sonnet-5` via a `CLAUDE_MODEL` constant. Rationale:
+  current Sonnet — the default balance of speed/intelligence at $2/$10
+  per MTok; analysis quality is the product differentiator, so staying on
+  the Sonnet tier (not Haiku) is deliberate. Verified against the LIVE
+  models-overview docs (not training memory — which had called the old
+  string "current"; lesson recorded): `claude-sonnet-5` is listed with
+  retirement not sooner than June 30, 2027.
+- Loud failure: `anthropic.NotFoundError` is now caught explicitly and
+  logs `MODEL RETIRED OR INVALID: <model> — update CLAUDE_MODEL in
+  outfit_analyzer.py` + the API error, so the next retirement
+  self-diagnoses in the Railway logs instead of hiding in a generic catch.
+
+### Standing note — model lifecycle
+Dateless Claude model IDs from the 4.6 generation onward (including
+`claude-sonnet-5`) are PINNED SNAPSHOTS, not rolling aliases — they can
+eventually be retired just like dated IDs. When Anthropic ships new
+generations, review `CLAUDE_MODEL` against
+https://platform.claude.com/docs/en/about-claude/models/overview.
+
+### Verification (production, 2026-08-27)
+- Railway auto-deployed from the git push (live in <2 min — auto-deploy
+  from main works now that Root Directory is set).
+- Direct POST /analyze with a real post image: `analyzed:true` in ~11s
+  with genuine fields — outfitName "Cobalt Hoodie Standstill", aesthetic
+  streetwear, named palette with percentages.
+- Full staged-reveal E2E on production with a throwaway account (real
+  upload through the UI): waiting shimmer → reveal with GENUINE Claude
+  analysis ("Cobalt Hoodie Standby Mode", Cobalt Drift 55% / Faded Denim
+  35% / Onyx Trim 10%, accurate composition notes), 10 staged sections,
+  clean revisit static, zero console errors. Screenshots at 390/1280.
+- Cleanup confirmed: post deleted through the app's own delete flow
+  (Firestore doc + Storage image + comments), Auth account deleted via
+  REST, and the app-created `users/{uid}` docs for ALL of today's
+  throwaways (this run + the 5 earlier prod-run leftovers) deleted via
+  CLI. Final diff: 42 Auth accounts = 42 user docs, 0 orphans.
+  (Signup creates a users doc the REST account-delete doesn't remove —
+  future sessions: always follow account deletion with a users-doc
+  delete.)
+
 ## Session log
 - **2026-08-22 (pass 1)**: Diagnosed both Phase 1 bugs + Railway status with
   runtime evidence; implemented image-fallback + profile-loading repairs;
