@@ -178,12 +178,25 @@ function PostCard({
         </div>
       )}
 
-      {/* Analyzing indicator — shows while analysis is pending */}
-      {!post.analyzed && !post.palette?.length && (
-        <div className="flex items-center gap-1 px-3 mt-2">
-          <div className="w-2 h-2 rounded-full bg-[var(--accent)] animate-pulse" />
-          <span className="text-xs text-[var(--text)] opacity-60">Analyzing outfit...</span>
-        </div>
+      {/* Analyzing indicator — only for fresh posts whose analysis is still
+          plausibly in flight; old never-analyzed posts show nothing instead
+          of a permanent "Analyzing..." lie. The palette-shaped shimmer keeps
+          the layout stable for when the real color cards arrive. */}
+      {!post.analyzed && !post.palette?.length &&
+        Date.now() - new Date(post.createdAt).getTime() < 10 * 60 * 1000 && (
+        <>
+          <div className="flex items-center gap-1.5 px-3 mt-2">
+            <div className="w-2 h-2 rounded-full bg-[var(--accent)] animate-pulse" />
+            <span className="text-xs text-[var(--text)] opacity-60">
+              Reading this fit — palette and aesthetics on the way
+            </span>
+          </div>
+          <div className="flex gap-2 mt-3 px-0 animate-pulse" aria-hidden="true">
+            {[0, 1, 2].map(i => (
+              <div key={i} className="flex-1 rounded-xl bg-[var(--border)] opacity-60" style={{ minHeight: '72px' }} />
+            ))}
+          </div>
+        </>
       )}
 
       {/* Color Palette Cards */}

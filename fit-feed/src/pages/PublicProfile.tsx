@@ -6,6 +6,8 @@ import { auth, db } from '../../firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { formatAuthor } from '../utils/formatAuthor';
 import PostImage from '../components/PostImage';
+import EmptyState from '../components/EmptyState';
+import { ProfileHeaderSkeleton, GridTileSkeleton } from '../components/Skeletons';
 
 export default function PublicProfile() {
   const { uid } = useParams<{ uid: string }>();
@@ -104,7 +106,16 @@ export default function PublicProfile() {
     }
   };
 
-  if (loading) return <div className="p-8 text-center text-[var(--text)]">Loading profile...</div>;
+  if (loading) return (
+    <div className="max-w-2xl mx-auto py-6 text-left pb-24 md:pb-6">
+      <div className="px-4 md:px-0">
+        <ProfileHeaderSkeleton />
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 px-4 md:px-0">
+        {[0, 1, 2].map(i => <GridTileSkeleton key={i} />)}
+      </div>
+    </div>
+  );
 
   return (
     <div className="max-w-2xl mx-auto py-6 text-left pb-24 md:pb-6">
@@ -155,7 +166,11 @@ export default function PublicProfile() {
       </div>
 
       {posts.length === 0 ? (
-        <p className="text-[var(--text)] text-sm px-4 md:px-0">No posts yet.</p>
+        <EmptyState
+          title="No fits posted yet"
+          message="When they share their first fit, it will show up here."
+          compact
+        />
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 px-4 md:px-0">
           {posts.map(post => (

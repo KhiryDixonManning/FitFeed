@@ -6,6 +6,7 @@ import { type Post, toggleLike, getComments, addComment, type Comment, deletePos
 import { recordInteraction } from '../feedService';
 import { formatAuthor } from '../utils/formatAuthor';
 import PostImage from '../components/PostImage';
+import EmptyState from '../components/EmptyState';
 
 const getStoreSuggestions = (aesthetic: string) => {
   const stores: Record<string, { name: string; url: string; description: string }[]> = {
@@ -297,8 +298,12 @@ export default function PostDetail() {
   );
 
   if (!post) return (
-    <div className="flex items-center justify-center min-h-screen">
-      <p className="text-[var(--text)]">Post not found.</p>
+    <div className="max-w-lg mx-auto pt-24">
+      <EmptyState
+        title="This fit is gone"
+        message="The post may have been deleted, or the link is off."
+        action={{ label: 'Back to the feed', onClick: () => navigate('/') }}
+      />
     </div>
   );
 

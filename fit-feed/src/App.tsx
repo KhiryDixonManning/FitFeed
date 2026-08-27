@@ -37,8 +37,9 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-[var(--text)] text-sm animate-pulse">Loading FitFeed...</div>
+      <div className="flex flex-col items-center justify-center min-h-screen gap-3">
+        <span className="text-2xl font-bold tracking-tight text-[var(--text-h)] animate-pulse">FitFeed</span>
+        <span className="text-xs uppercase tracking-widest text-[var(--text)] opacity-60">Loading</span>
       </div>
     );
   }

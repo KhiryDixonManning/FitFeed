@@ -6,6 +6,8 @@ import { getTrendingFeed } from '../feedService';
 import { type Post } from '../FirebaseDB';
 import { CATEGORIES } from '../constants/categories';
 import PostImage from '../components/PostImage';
+import EmptyState from '../components/EmptyState';
+import { LeaderboardRowSkeleton } from '../components/Skeletons';
 
 export default function Leaderboard() {
   const navigate = useNavigate();
@@ -58,7 +60,19 @@ export default function Leaderboard() {
     );
   }, [selectedCategory, posts]);
 
-  if (loading) return <div className="p-8 text-center text-[var(--text)]">Loading leaderboard...</div>;
+  if (loading) return (
+    <div className="max-w-2xl mx-auto py-6 text-left pb-24 md:pb-6">
+      <h2 className="text-2xl font-bold text-[var(--text-h)] mb-4 px-4 md:px-0">Aura Farmers 🌾</h2>
+      <div className="flex gap-2 pb-2 mb-6 px-4 md:px-0 animate-pulse">
+        {[10, 20, 16, 14].map((w, i) => (
+          <div key={i} className="h-6 rounded-full bg-[var(--border)]" style={{ width: `${w * 4}px` }} />
+        ))}
+      </div>
+      <div className="flex flex-col gap-3 px-4 md:px-0">
+        {[0, 1, 2, 3, 4].map(i => <LeaderboardRowSkeleton key={i} />)}
+      </div>
+    </div>
+  );
 
   return (
     <div className="max-w-2xl mx-auto py-6 text-left pb-24 md:pb-6">
@@ -92,7 +106,14 @@ export default function Leaderboard() {
       </div>
 
       {filtered.length === 0 ? (
-        <p className="text-[var(--text)] text-sm px-4 md:px-0">No posts in this category yet.</p>
+        <EmptyState
+          title={selectedCategory === 'all' ? 'No aura farmed yet' : `No ${selectedCategory} on the board`}
+          message="Rankings build from likes and comments — the most-loved fits climb here."
+          action={selectedCategory !== 'all'
+            ? { label: 'Show all styles', onClick: () => setSelectedCategory('all') }
+            : undefined}
+          compact
+        />
       ) : (
         <div className="flex flex-col gap-3 px-4 md:px-0">
           {filtered.map((post, index) => {

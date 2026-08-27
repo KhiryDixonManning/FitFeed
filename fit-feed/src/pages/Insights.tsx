@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 import { getPosts, type Post } from '../FirebaseDB';
 import { auth } from '../../firebase';
 import PostImage from '../components/PostImage';
+import EmptyState from '../components/EmptyState';
+import { InsightsSkeleton } from '../components/Skeletons';
+import { useNavigate } from 'react-router-dom';
 import {
   BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, Cell,
 } from 'recharts';
@@ -11,6 +14,7 @@ interface InsightsProps {
 }
 
 export default function Insights({ uid }: InsightsProps) {
+  const navigate = useNavigate();
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -25,15 +29,22 @@ export default function Insights({ uid }: InsightsProps) {
   }, [uid]);
 
   if (loading) return (
-    <div className="flex items-center justify-center min-h-screen">
-      <p className="text-[var(--text)] animate-pulse">Loading insights...</p>
+    <div className="max-w-2xl mx-auto p-4 md:p-6 pb-24 md:pb-6 text-left">
+      <h2 className="text-2xl font-bold text-[var(--text-h)] mb-1">Creator Insights</h2>
+      <p className="text-xs text-[var(--text)] mb-6">@{auth.currentUser?.email}</p>
+      <InsightsSkeleton />
     </div>
   );
 
   if (posts.length === 0) return (
-    <div className="max-w-2xl mx-auto p-6 text-center pb-24">
-      <h2 className="text-2xl font-bold text-[var(--text-h)] mb-2">Creator Insights</h2>
-      <p className="text-[var(--text)] text-sm">Upload posts to start seeing your insights.</p>
+    <div className="max-w-2xl mx-auto p-4 md:p-6 pb-24 md:pb-6 text-left">
+      <h2 className="text-2xl font-bold text-[var(--text-h)] mb-1">Creator Insights</h2>
+      <p className="text-xs text-[var(--text)] mb-6">@{auth.currentUser?.email}</p>
+      <EmptyState
+        title="Your numbers arrive with your first fit"
+        message="Engagement, best-performing styles, and your AI style breakdown all build from what you post."
+        action={{ label: 'Upload a fit', onClick: () => navigate('/upload') }}
+      />
     </div>
   );
 

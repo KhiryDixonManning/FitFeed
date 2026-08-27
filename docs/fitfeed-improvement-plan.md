@@ -1,10 +1,12 @@
 # FitFeed Improvement Plan — persistent session context
 
 > Read this first each session. Don't re-derive anything recorded here.
-> Last updated: 2026-08-23. Phase 1, 1B, Phase 3 (saved outfits), and
-> Phase 3b (why-recommended) are all COMPLETE and VERIFIED on production.
-> Nothing is currently blocked. Empty-states redesign (from the Phase 2
-> shortlist) remains the one undone item, not started, awaiting go-ahead.
+> Last updated: 2026-08-27. Phase 1, 1B, Phase 3 (saved outfits), Phase 3b
+> (why-recommended), and Phase A of the polish mission (empty/loading
+> states) are COMPLETE. Phase A changes are built + tested locally but NOT
+> committed and NOT deployed — this machine currently has no deploy
+> credentials (see Phase A → Environment). Phases B (performance) and C
+> (competitive proposals) not started.
 
 ## Phase 1 / 1B — VERIFIED FIXED (2026-08-22, second pass)
 - User fixed Firebase billing. Re-ran `diagnose_posts.py`: all sampled images
@@ -326,6 +328,115 @@ identity guidance.
 Commits: `36eadc4` (feature), `52cf5a2` (test ids) — both pushed to
 `origin/main`.
 
+## Phase A — Empty/loading states + UI seams (COMPLETE locally, 2026-08-27)
+
+Part of the "polish, performance & competitive audit" mission
+(docs/fitfeed-prompt-optimized.md). Phases: A (UI/UX) done; B (perf) and
+C (competitive proposals) pending.
+
+### Environment changes since 2026-08-23 (important for future sessions)
+- **Node.js is gone from this machine** (no node/npm anywhere on PATH or
+  disk), `fit-feed/node_modules` was gone, and
+  `python-backend/serviceAccountKey.json` + `python-backend/venv` are gone.
+  Firebase CLI and its cached credentials are gone too. Previous sessions
+  had all of these — the machine was evidently cleaned.
+- Workaround used this session: portable Node v22.14.0 unzipped into the
+  session scratchpad (not installed system-wide), `npm ci` restored
+  node_modules. Corporate TLS-inspecting proxy requires
+  `NODE_EXTRA_CA_CERTS=<exported Windows root CAs .pem>` for npm and
+  `curl --ssl-no-revoke` for downloads.
+- **Consequence: could NOT deploy or verify on production** (no Firebase
+  credentials, no admin key for a throwaway account). All Phase A
+  verification is local. Deploy + production check still owed once
+  credentials exist again.
+- Also: `docs/fitfeed-improvement-plan.md` was deleted from the working
+  tree sometime before/during this session (not by the session); restored
+  via `git restore`.
+
+### What was built (all frontend, no behavior/schema changes)
+Two new shared components:
+- `src/components/EmptyState.tsx` — editorial empty state: three muted
+  swatch dots (echoes the palette-chip identity), tight title, one
+  supporting line, optional outlined pill action. `compact` variant for
+  in-card placements.
+- `src/components/Skeletons.tsx` — PostCardSkeleton, GridTileSkeleton,
+  LeaderboardRowSkeleton, ProfileHeaderSkeleton, InsightsSkeleton. All
+  mirror their real layouts (same aspect ratios/padding) so content lands
+  with zero layout shift; same visual language as PostDetail's existing
+  skeleton (var(--border) blocks + animate-pulse).
+
+Wired in:
+- **Feed**: loading → 4 PostCardSkeletons in the real grid. Empty states
+  split into 4 contextual variants: no follows (→ Browse Discover), no
+  posts at all (→ Upload a fit), category empty (→ Show all styles),
+  follows-but-quiet (→ Browse Discover).
+- **Explore**: header now persists during load (was a full-screen pulse
+  that dropped the whole header — big layout shift); skeleton tile grid;
+  post count hidden while loading; title normalized text-xl → text-2xl to
+  match every other page; empty state distinguishes filtered vs unfiltered.
+- **Profile**: full skeleton page (header + style-profile block + grid);
+  My Posts empty → EmptyState + Upload CTA; Saved empty → EmptyState
+  ("private moodboard" framing) + Find-fits CTA.
+- **PublicProfile**: skeleton header + grid; empty → EmptyState.
+- **Insights**: loading keeps the page shell (title + handle) with
+  InsightsSkeleton; zero-posts empty → EmptyState + Upload CTA.
+- **Leaderboard**: heading + filter-pill skeletons + 5 row skeletons;
+  empty → EmptyState (category-aware, with Show-all action).
+- **PostDetail**: "Post not found" → EmptyState with back-to-feed action
+  (loading skeleton already existed, untouched).
+- **StyleProfile**: empty state redesigned as a "ghost portrait" (4 muted
+  category rows waiting to fill) + invitation copy. **Also fixed a real
+  rules-of-hooks bug**: the four useMemos were called AFTER the empty-state
+  early return, so preferences transitioning empty → populated would throw
+  "Rendered more hooks than during the previous render". Hooks now run
+  unconditionally before the return.
+- **PostCard**: "Analyzing outfit..." previously rendered FOREVER on old
+  never-analyzed posts (a visible lie). Now gated on post age < 10 min;
+  fresh posts get the pulse dot + "Reading this fit — palette and
+  aesthetics on the way" + a palette-shaped 3-block shimmer, so the AI
+  wait feels intentional and the real color cards land in the same slot
+  (no shift). Old unanalyzed posts show nothing.
+- **App**: root loading → FitFeed wordmark + small LOADING tick (was
+  "Loading FitFeed..." text).
+- **Login**: added one-line tagline ("Share your fits. Let the AI read
+  your style.") — the only first-run explanation of what the app is.
+
+Four loading states now distinct: content loading (skeletons), uploading
+(existing "Saving your fit..." button state, untouched), AI analysis
+(PostCard shimmer above), recommendation refresh (deliberately silent —
+posts are already visible; a spinner over a reorder would be noise; noted
+as a design decision, not an omission).
+
+### Verification (local — production deploy still owed)
+- `npm run build` (tsc + vite) passes; all 6 Playwright UI tests pass.
+- Visual verification via a temporary Vite entry (`preview-states.html` +
+  `src/previewStates.tsx`, both deleted after) mounting every new state
+  without Firebase; Playwright element screenshots at 320/390/1280 widths:
+  all states render correctly, 0 console errors, 0 horizontal overflow.
+- Gotcha for future Playwright work: `#root`/`body` overflow rules make
+  body the scroll container, so **fullPage screenshots capture only the
+  first viewport** — use element screenshots (`locator.screenshot()`).
+
+### Open items / deferred
+- **Schema consideration (future)**: posts have no explicit analysis-status
+  field — only `analyzed?: boolean`, written once on success (app.py writes
+  `analyzed: True`; nothing is ever written for pending/failed). So a
+  failed-analysis post is indistinguishable from an in-flight one, and the
+  PostCard "analyzing" shimmer is gated on post age < 10 min as a proxy.
+  If the upload flow ever writes `analysisStatus: 'pending' | 'complete' |
+  'failed'` at post creation, gate on that instead and keep the time check
+  only for legacy posts lacking the field.
+- **Deploy + production verification owed** when Firebase credentials are
+  available again (user action: `firebase login` or restore CI creds).
+- Changes uncommitted (per repo convention: commit when user asks).
+- Typography/dashboard-risk pass (Phase A items 3–4) found no violations
+  worth code changes beyond the Explore title fix: Insights/StyleProfile
+  already read as portraits, not dashboards (per Phase 2 audit), and
+  spacing logic is consistent (px-4 gutters, text-2xl page titles).
+- No subjective identity decisions were taken silently: everything shipped
+  is either a repair of a broken/flat state or matches existing visual
+  language (chips, borders, --accent).
+
 ## Session log
 - **2026-08-22 (pass 1)**: Diagnosed both Phase 1 bugs + Railway status with
   runtime evidence; implemented image-fallback + profile-loading repairs;
@@ -368,3 +479,14 @@ Commits: `36eadc4` (feature), `52cf5a2` (test ids) — both pushed to
   reasons, Discover/Following correctly show none, zero console errors.
   Committed and pushed both commits. Phase 3b complete. Stopping here as
   instructed — no further phases started.
+- **2026-08-27 (pass 6)**: Polish mission Phase A. Discovered the machine
+  was cleaned (Node, node_modules, service key, Firebase creds all gone);
+  bootstrapped a portable Node into the scratchpad + npm ci. Restored the
+  accidentally-deleted improvement plan from git. Implemented the full
+  empty/loading-state redesign (EmptyState + Skeletons components, wired
+  across Feed/Explore/Profile/PublicProfile/Insights/Leaderboard/
+  PostDetail/StyleProfile/PostCard/App/Login), fixed the StyleProfile
+  rules-of-hooks bug and the eternal "Analyzing outfit..." seam. Build +
+  all 6 Playwright tests green; every new state visually verified at 3
+  widths via a temporary preview harness (deleted after). NOT deployed —
+  no credentials on this machine. Stopped at the Phase A boundary.
