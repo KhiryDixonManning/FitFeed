@@ -1,6 +1,7 @@
 import {
   collection, addDoc, DocumentReference, getDocs, query, orderBy, where,
   doc, getDoc, setDoc, updateDoc, increment, arrayUnion, arrayRemove, deleteDoc,
+  documentId,
 } from "firebase/firestore";
 import { getStorage, ref, deleteObject } from "firebase/storage";
 import { db } from "../firebase";
@@ -101,6 +102,48 @@ export const getPosts = async (): Promise<Post[]> => {
         } else {
             console.log("Unknown error:", error);
         }
+        return [];
+    }
+};
+
+// Only this author's posts — avoids downloading the whole collection when a
+// page (Profile, PublicProfile, Insights) needs one user's posts. No orderBy
+// so the automatic single-field index suffices (no composite index deploy);
+// one author's posts are few, so we sort client-side.
+export const getPostsByAuthor = async (authorId: string): Promise<Post[]> => {
+    try {
+        const q = query(collection(db, "posts"), where("authorId", "==", authorId));
+        const snapshot = await getDocs(q);
+        return snapshot.docs
+            .map(d => ({
+                id: d.id,
+                ...d.data(),
+                createdAt: d.data().createdAt?.toDate?.()?.toISOString() ?? new Date().toISOString(),
+            } as Post))
+            .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    } catch (error) {
+        console.error("[getPostsByAuthor] Error:", error);
+        return [];
+    }
+};
+
+// Fetch specific posts by id (e.g. the saved list) in chunks of 30 — the
+// Firestore 'in' operator limit — instead of loading every post.
+export const getPostsByIds = async (ids: string[]): Promise<Post[]> => {
+    if (ids.length === 0) return [];
+    try {
+        const chunks: string[][] = [];
+        for (let i = 0; i < ids.length; i += 30) chunks.push(ids.slice(i, i + 30));
+        const snapshots = await Promise.all(chunks.map(chunk =>
+            getDocs(query(collection(db, "posts"), where(documentId(), "in", chunk)))
+        ));
+        return snapshots.flatMap(s => s.docs.map(d => ({
+            id: d.id,
+            ...d.data(),
+            createdAt: d.data().createdAt?.toDate?.()?.toISOString() ?? new Date().toISOString(),
+        } as Post)));
+    } catch (error) {
+        console.error("[getPostsByIds] Error:", error);
         return [];
     }
 };

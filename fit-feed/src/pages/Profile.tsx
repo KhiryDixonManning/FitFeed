@@ -1,12 +1,17 @@
 import { useEffect, useState } from 'react';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { getPosts, toggleLike, getUserPreferences, deletePost, getFollowerCount, getFollowingCount, getSavedPostIds, unsavePost } from '../FirebaseDB';
+import { getPostsByAuthor, getPostsByIds, toggleLike, getUserPreferences, deletePost, getFollowerCount, getFollowingCount, getSavedPostIds, unsavePost } from '../FirebaseDB';
 import type { Post } from '../FirebaseDB';
 import { recordInteraction } from '../feedService';
+import { lazy, Suspense } from 'react';
 import { auth, db } from '../../firebase';
-import StyleProfile from '../components/StyleProfile';
+// Lazy so recharts (radar chart) stays out of the main bundle — the chunk
+// loads in parallel with the profile's Firestore reads.
+const StyleProfile = lazy(() => import('../components/StyleProfile'));
 import PostImage from '../components/PostImage';
+import EmptyState from '../components/EmptyState';
+import { ProfileHeaderSkeleton, GridTileSkeleton } from '../components/Skeletons';
 import { useNavigate } from 'react-router-dom';
 import { seedAllPosts, removeAllDemoComments } from '../utils/demoComments';
 
@@ -40,21 +45,20 @@ export default function Profile({ uid }: ProfileProps) {
     const load = async () => {
       // Any single failed read must never leave the page stuck on the spinner
       try {
-        const allPosts = await getPosts();
-        const myPosts = allPosts.filter(p => p.authorId === uid);
-        setPosts(myPosts);
-
-        const [prefs, fCount, fgCount, savedIds] = await Promise.all([
+        // Targeted queries: only this user's posts + only the saved ids —
+        // not the whole posts collection filtered client-side.
+        const [myPosts, prefs, fCount, fgCount, savedIds] = await Promise.all([
+          getPostsByAuthor(uid),
           getUserPreferences(uid),
           getFollowerCount(uid),
           getFollowingCount(uid),
           getSavedPostIds(uid),
         ]);
+        setPosts(myPosts);
         setUserPreferences(prefs);
         setFollowerCount(fCount);
         setFollowingCount(fgCount);
-        const savedIdSet = new Set(savedIds);
-        setSavedPosts(allPosts.filter(p => savedIdSet.has(p.id)));
+        setSavedPosts(await getPostsByIds(savedIds));
 
         // Load username and avatar from users collection
         if (auth.currentUser) {
@@ -145,7 +149,17 @@ export default function Profile({ uid }: ProfileProps) {
     setDeletingPostId(null);
   };
 
-  if (loading) return <div className="p-8 text-center text-[var(--text)]">Loading profile...</div>;
+  if (loading) return (
+    <div className="max-w-2xl mx-auto py-6 px-0 md:px-6 pb-24 md:pb-6">
+      <ProfileHeaderSkeleton />
+      <div className="mb-6 px-4 md:px-0 animate-pulse">
+        <div className="border border-[var(--border)] rounded-xl h-40" />
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 gap-3 px-4 md:px-0">
+        {[0, 1, 2].map(i => <GridTileSkeleton key={i} />)}
+      </div>
+    </div>
+  );
 
   if (loadError) {
     return (
@@ -243,7 +257,9 @@ export default function Profile({ uid }: ProfileProps) {
 
       {/* Style Profile */}
       <div className="mb-6 px-4 md:px-0">
-        <StyleProfile preferences={userPreferences} />
+        <Suspense fallback={<div className="border border-[var(--border)] rounded-xl h-40 animate-pulse" />}>
+          <StyleProfile preferences={userPreferences} />
+        </Suspense>
       </div>
 
       {/* Demo Controls — dev only */}
@@ -293,7 +309,12 @@ export default function Profile({ uid }: ProfileProps) {
 
       {tab === 'mine' ? (
         posts.length === 0 ? (
-          <p className="text-[var(--text)] text-sm px-4 md:px-0">No posts yet. Upload your first fit!</p>
+          <EmptyState
+            title="No fits on record"
+            message="Your posts live here — upload one and the AI will read its palette and aesthetic for you."
+            action={{ label: 'Upload your first fit', onClick: () => navigate('/upload') }}
+            compact
+          />
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 gap-3 px-4 md:px-0">
             {posts.map(post => (
@@ -331,9 +352,12 @@ export default function Profile({ uid }: ProfileProps) {
           </div>
         )
       ) : savedPosts.length === 0 ? (
-        <p className="text-[var(--text)] text-sm px-4 md:px-0">
-          No saved outfits yet. Tap the bookmark icon on a post to save it here.
-        </p>
+        <EmptyState
+          title="Nothing saved yet"
+          message="Tap the bookmark on any fit to keep it here — a private moodboard only you can see."
+          action={{ label: 'Find fits to save', onClick: () => navigate('/') }}
+          compact
+        />
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 gap-3 px-4 md:px-0">
           {savedPosts.map(post => (

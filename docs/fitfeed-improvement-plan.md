@@ -1,10 +1,11 @@
 # FitFeed Improvement Plan — persistent session context
 
 > Read this first each session. Don't re-derive anything recorded here.
-> Last updated: 2026-08-23. Phase 1, 1B, Phase 3 (saved outfits), and
-> Phase 3b (why-recommended) are all COMPLETE and VERIFIED on production.
-> Nothing is currently blocked. Empty-states redesign (from the Phase 2
-> shortlist) remains the one undone item, not started, awaiting go-ahead.
+> Last updated: 2026-08-27. Phase 1, 1B, Phase 3 (saved outfits), Phase 3b
+> (why-recommended), and polish-mission Phases A (empty/loading states)
+> and B (performance) are COMPLETE, committed on branch `phase-a-polish`
+> (5b88e91 = A, faac493 = B), DEPLOYED to production and VERIFIED live
+> on 2026-08-27 (see "Deployment status" below).
 
 ## Phase 1 / 1B — VERIFIED FIXED (2026-08-22, second pass)
 - User fixed Firebase billing. Re-ran `diagnose_posts.py`: all sampled images
@@ -326,6 +327,330 @@ identity guidance.
 Commits: `36eadc4` (feature), `52cf5a2` (test ids) — both pushed to
 `origin/main`.
 
+## Phase A — Empty/loading states + UI seams (COMPLETE locally, 2026-08-27)
+
+Part of the "polish, performance & competitive audit" mission
+(docs/fitfeed-prompt-optimized.md). Phases: A (UI/UX) done; B (perf) and
+C (competitive proposals) pending.
+
+### Environment changes since 2026-08-23 (important for future sessions)
+- **Node.js is gone from this machine** (no node/npm anywhere on PATH or
+  disk), `fit-feed/node_modules` was gone, and
+  `python-backend/serviceAccountKey.json` + `python-backend/venv` are gone.
+  Firebase CLI and its cached credentials are gone too. Previous sessions
+  had all of these — the machine was evidently cleaned.
+- Workaround used this session: portable Node v22.14.0 unzipped into the
+  session scratchpad (not installed system-wide), `npm ci` restored
+  node_modules. Corporate TLS-inspecting proxy requires
+  `NODE_EXTRA_CA_CERTS=<exported Windows root CAs .pem>` for npm and
+  `curl --ssl-no-revoke` for downloads.
+- **Consequence: could NOT deploy or verify on production** (no Firebase
+  credentials, no admin key for a throwaway account). All Phase A
+  verification is local. Deploy + production check still owed once
+  credentials exist again.
+- Also: `docs/fitfeed-improvement-plan.md` was deleted from the working
+  tree sometime before/during this session (not by the session); restored
+  via `git restore`.
+
+### What was built (all frontend, no behavior/schema changes)
+Two new shared components:
+- `src/components/EmptyState.tsx` — editorial empty state: three muted
+  swatch dots (echoes the palette-chip identity), tight title, one
+  supporting line, optional outlined pill action. `compact` variant for
+  in-card placements.
+- `src/components/Skeletons.tsx` — PostCardSkeleton, GridTileSkeleton,
+  LeaderboardRowSkeleton, ProfileHeaderSkeleton, InsightsSkeleton. All
+  mirror their real layouts (same aspect ratios/padding) so content lands
+  with zero layout shift; same visual language as PostDetail's existing
+  skeleton (var(--border) blocks + animate-pulse).
+
+Wired in:
+- **Feed**: loading → 4 PostCardSkeletons in the real grid. Empty states
+  split into 4 contextual variants: no follows (→ Browse Discover), no
+  posts at all (→ Upload a fit), category empty (→ Show all styles),
+  follows-but-quiet (→ Browse Discover).
+- **Explore**: header now persists during load (was a full-screen pulse
+  that dropped the whole header — big layout shift); skeleton tile grid;
+  post count hidden while loading; title normalized text-xl → text-2xl to
+  match every other page; empty state distinguishes filtered vs unfiltered.
+- **Profile**: full skeleton page (header + style-profile block + grid);
+  My Posts empty → EmptyState + Upload CTA; Saved empty → EmptyState
+  ("private moodboard" framing) + Find-fits CTA.
+- **PublicProfile**: skeleton header + grid; empty → EmptyState.
+- **Insights**: loading keeps the page shell (title + handle) with
+  InsightsSkeleton; zero-posts empty → EmptyState + Upload CTA.
+- **Leaderboard**: heading + filter-pill skeletons + 5 row skeletons;
+  empty → EmptyState (category-aware, with Show-all action).
+- **PostDetail**: "Post not found" → EmptyState with back-to-feed action
+  (loading skeleton already existed, untouched).
+- **StyleProfile**: empty state redesigned as a "ghost portrait" (4 muted
+  category rows waiting to fill) + invitation copy. **Also fixed a real
+  rules-of-hooks bug**: the four useMemos were called AFTER the empty-state
+  early return, so preferences transitioning empty → populated would throw
+  "Rendered more hooks than during the previous render". Hooks now run
+  unconditionally before the return.
+- **PostCard**: "Analyzing outfit..." previously rendered FOREVER on old
+  never-analyzed posts (a visible lie). Now gated on post age < 10 min;
+  fresh posts get the pulse dot + "Reading this fit — palette and
+  aesthetics on the way" + a palette-shaped 3-block shimmer, so the AI
+  wait feels intentional and the real color cards land in the same slot
+  (no shift). Old unanalyzed posts show nothing.
+- **App**: root loading → FitFeed wordmark + small LOADING tick (was
+  "Loading FitFeed..." text).
+- **Login**: added one-line tagline ("Share your fits. Let the AI read
+  your style.") — the only first-run explanation of what the app is.
+
+Four loading states now distinct: content loading (skeletons), uploading
+(existing "Saving your fit..." button state, untouched), AI analysis
+(PostCard shimmer above), recommendation refresh (deliberately silent —
+posts are already visible; a spinner over a reorder would be noise; noted
+as a design decision, not an omission).
+
+### Verification (local — production deploy still owed)
+- `npm run build` (tsc + vite) passes; all 6 Playwright UI tests pass.
+- Visual verification via a temporary Vite entry (`preview-states.html` +
+  `src/previewStates.tsx`, both deleted after) mounting every new state
+  without Firebase; Playwright element screenshots at 320/390/1280 widths:
+  all states render correctly, 0 console errors, 0 horizontal overflow.
+- Gotcha for future Playwright work: `#root`/`body` overflow rules make
+  body the scroll container, so **fullPage screenshots capture only the
+  first viewport** — use element screenshots (`locator.screenshot()`).
+
+### Open items / deferred
+- **Schema consideration (future)**: posts have no explicit analysis-status
+  field — only `analyzed?: boolean`, written once on success (app.py writes
+  `analyzed: True`; nothing is ever written for pending/failed). So a
+  failed-analysis post is indistinguishable from an in-flight one, and the
+  PostCard "analyzing" shimmer is gated on post age < 10 min as a proxy.
+  If the upload flow ever writes `analysisStatus: 'pending' | 'complete' |
+  'failed'` at post creation, gate on that instead and keep the time check
+  only for legacy posts lacking the field.
+- **Deploy + production verification owed** when Firebase credentials are
+  available again (user action: `firebase login` or restore CI creds).
+- Changes uncommitted (per repo convention: commit when user asks).
+- Typography/dashboard-risk pass (Phase A items 3–4) found no violations
+  worth code changes beyond the Explore title fix: Insights/StyleProfile
+  already read as portraits, not dashboards (per Phase 2 audit), and
+  spacing logic is consistent (px-4 gutters, text-2xl page titles).
+- No subjective identity decisions were taken silently: everything shipped
+  is either a repair of a broken/flat state or matches existing visual
+  language (chips, borders, --accent).
+
+## Phase B — Performance audit (COMPLETE locally, 2026-08-27)
+
+### Findings (Location / Observed / Why / Evidence / Smallest fix)
+
+**F1 — Author-lookup fan-out with a broken dedup guard (IMPLEMENTED)**
+- Location: `Feed.tsx fetchAuthorEmails`, `Leaderboard.tsx` load effect.
+- Observed: `posts.map(async p => { if (emailMap[p.authorId]) return; await
+  getDoc(users/p.authorId) ... })` — all callbacks start before any
+  `emailMap` write lands, so the guard never dedupes concurrent reads:
+  N posts by one author = N user-doc reads, every first load of Feed and
+  Leaderboard.
+- Why: Firestore reads scale with post count instead of author count on
+  the two highest-traffic screens (49 posts today, grows unbounded).
+- Evidence: code inspection — the race is deterministic (guard checks a
+  map that is only written after each await; JS runs the map callbacks
+  synchronously up to their first await before any resolves).
+- Fix: dedupe to `[...new Set(authorIds)]` before fanning out. Reads drop
+  from #posts to #unique-authors (49 → single digits on current data).
+
+**F2 — Full-collection getPosts() filtered client-side (IMPLEMENTED)**
+- Location: `Profile.tsx`, `PublicProfile.tsx`, `Insights.tsx` (each did
+  `getPosts()` then `.filter(p => p.authorId === uid)`); Profile's saved
+  tab filtered the same full download against saved ids.
+- Observed: every visit to any profile or Insights downloaded the entire
+  posts collection (49 docs today, unbounded growth) to keep ≤ a handful.
+- Why: reads + payload scale with total app content, not the user's own.
+- Evidence: code inspection (queries are unconditional getDocs of the whole
+  ordered collection — see FirebaseDB.getPosts).
+- Fix: new `getPostsByAuthor(uid)` (`where('authorId','==',uid)`, no
+  orderBy so the automatic index suffices — sorted client-side) and
+  `getPostsByIds(ids)` (`where(documentId(),'in',chunk)` in chunks of 30)
+  in FirebaseDB.ts; wired into all three pages. Per-visit reads drop from
+  49+ to (own posts) / (saved count). Feed/Explore/Leaderboard/feedService
+  still fetch the full set — the ranking pipeline and tag/color filters
+  legitimately need broad post data (per mission guidance, not touched).
+
+**F3 — recharts in the critical bundle (IMPLEMENTED)**
+- Location: `App.tsx` (Insights route), `Profile.tsx` (StyleProfile).
+- Observed: single 1,063,358-byte JS chunk; recharts is only used by
+  Insights + StyleProfile, but every visitor paid for it on first paint.
+- Evidence: build output before/after (below); `grep recharts src` → only
+  those two files.
+- Fix: `React.lazy` for the Insights route (Suspense fallback null — the
+  page renders its own skeleton) and for StyleProfile inside Profile
+  (fallback = the same h-40 bordered pulse block used while loading).
+- **Before**: 1 chunk, 1,063,358 B. **After**: eager = index 249,860 +
+  shared chunk 424,855 + jsx-runtime 12,007 = 686,722 B (**−35%**);
+  deferred to their routes: CategoricalChart 241,670 + Insights 106,582 +
+  StyleProfile 32,821.
+
+### Documented but NOT implemented (below the top-3 cut)
+- `PostCard` is memo()'d but Feed passes freshly-created arrow callbacks
+  (`onLike={() => handleLike(post)}` etc.) so memo never bails out. Real
+  but cheap today (list is one page, cards are light to re-render);
+  fixing properly means stable per-post callbacks — revisit if the feed
+  gets long/virtualized.
+- `getFollowerCount`/`getFollowingCount` download all follow docs for
+  `.size` — `getCountFromServer` aggregate would make it 0 doc reads.
+- `recordInteraction` does read-modify-write on userPreferences; a
+  `setDoc(..., { [category]: increment(n) }, { merge: true })` saves the
+  read on every like/comment.
+- `PostDetail.handleShowLikers` fetches up to 20 liker docs sequentially
+  in a for-await loop (latency, not read count).
+- `/health` is pinged both by `config.ts` (every 4 min) and Feed on mount.
+- Feed's onSnapshot re-POSTs the entire posts array to `/rank` on every
+  collection change (any like anywhere); debounced 300 ms; part of the
+  ranking design — left alone per mission.
+
+### Verification
+- Build passes; all 6 Playwright UI tests pass after the changes.
+- The 2 `api` project tests fail because they target `http://localhost:5000`
+  (local Flask) and the python venv no longer exists on this machine —
+  pre-existing environmental failure, unrelated; production Railway
+  `/health` returns `{"status":"ok"}` (checked directly).
+- Bundle before/after measured above (the one instrumentable metric
+  without production auth on this machine); F1/F2 read counts are
+  deterministic from query semantics.
+
+## Deployment status — Phases A + B (2026-08-27)
+- User completed `firebase login` interactively (account
+  khiry.dixon-manning@atlasstudents.com, portable-Node workaround); deployed
+  via `firebase deploy --only hosting` → release complete,
+  https://fitfeed-67ee8.web.app.
+- Live verification with throwaway accounts created through the real
+  signup UI and deleted afterward via the Identity Toolkit REST API
+  (`accounts:delete` with the account's own idToken — works without the
+  missing admin key; note for future sessions):
+  - Feed loading skeletons observed live under a throttled connection;
+    Following-tab "Your circle starts here" and Saved "Nothing saved yet"
+    empty states render (screenshots).
+  - Profile renders skeleton → "No fits on record" + style-portrait ghost.
+  - Insights route lazy-loads its chunk on production
+    (`Insights-B3MXbJJE.js` observed in the network log) and renders the
+    "Your numbers arrive with your first fit" empty state.
+  - Zero console errors across all checks; all diagnostic accounts deleted.
+- Verification gotcha recorded: under network throttling, full page.goto
+  navigations re-bootstrap the SPA (Firebase auth handshake each time) and
+  can exceed 20s — verify via in-app navigation and generous waits.
+
+## Phase C — Competitive polish proposals (COMPLETE, 2026-08-27 — proposals only, NOT implemented)
+
+### Public patterns inspected (app-store listings + published reviews; no
+### private/inaccessible product surfaces were guessed at)
+
+**Pattern 1 — Onboarding that seeds taste (Lekondo, Indyx)**
+- They do: Lekondo's onboarding has users "discover personal colors and
+  aesthetics while establishing their style profile"; Indyx runs a style
+  quiz (pick outfits that resonate) that outputs "3 style words" shown on
+  every profile.
+- FitFeed currently does: bare email/password + one tagline. Preferences
+  start at zero; For You is unpersonalized, the style portrait is an empty
+  ghost, and "Why this?" shows only community signals until the user has
+  liked/commented for a while.
+- Lesson: strong products never show a cold personalization engine — they
+  collect a minute of taste input up front and pay it back instantly.
+- FitFeed adaptation: a visual taste-pick step after signup seeding the
+  EXISTING userPreferences model (no schema change — it's the same
+  category→score map the ranking engine already consumes).
+
+**Pattern 2 — Analysis as a product moment (Lekondo)**
+- They do: post a fit → the app "picks out the items you're wearing" and
+  presents an instant, legible breakdown; reviewers praise that it "nails
+  the vibe and colors of each fit" — the reveal IS the product.
+- FitFeed currently does: upload → redirect to feed → analysis fields
+  silently pop into the card whenever Flask finishes. The app's most
+  impressive capability lands as ambient data, easy to miss entirely.
+- Lesson: the moment between photo and analysis is the emotional peak;
+  staging it (anticipation → reveal hierarchy) is what makes AI feel like
+  craft instead of metadata.
+- FitFeed adaptation: land on the new post's detail page and choreograph
+  the existing fields as they arrive (palette sweeps in, outfit name as
+  the editorial title, then chips) — presentation only, same pipeline.
+
+**Pattern 3 — Style identity as a named, human artifact (Indyx)**
+- They do: "3 style words" — a compact verbal identity that appears on
+  every profile and makes taste legible and shareable at a glance.
+- FitFeed currently does: identity is distributed across a radar chart
+  (Style Profile), stat tiles (Insights), and per-post data; accurate but
+  it reads as measurement, not portrait. Nothing names the user's style.
+- Lesson: aggregated data becomes identity when it's composed and NAMED —
+  words + a palette beat five charts.
+- FitFeed adaptation: derive a headline identity (dominant aesthetics as
+  words + the user's aggregate palette from their own analyzed posts) and
+  lead the Profile/Style Profile with it; keep the radar as supporting
+  detail below.
+
+### Proposals (exactly 3, prioritized by perception-gain per effort)
+
+**P1 — Stage the analysis reveal (highest priority)**
+- Problem: the AI analysis — FitFeed's differentiator — arrives silently
+  in a feed card. A first-time poster (or recruiter watching a demo) can
+  miss the product's best moment entirely.
+- Proposed improvement: after publish, navigate to the new post's detail
+  page in a "reading your fit" state (the Phase A shimmer language,
+  full-page composition). As the Firestore doc updates, reveal in stages:
+  color palette cards first, then the italic outfit name as the page
+  title, then aesthetic-composition chips and notes. One short staged
+  sequence, ~2–4s of choreography over data that already arrives async.
+- Why it matters: converts the strongest backend capability into the
+  product's signature moment; also gives the upload flow a natural
+  destination (currently it dumps you back at the feed).
+- Scope: Upload.tsx (redirect target), PostDetail.tsx (pending/staged
+  states; it already has the skeleton + all analysis sections), a
+  Firestore onSnapshot on the single new post doc.
+- Complexity: M. Expected perception gain: H. Risks: analysis can take
+  long or fail — needs honest timeout copy ("still reading — check back")
+  falling back to the normal detail page; must not block interaction.
+
+**P2 — Taste-pick onboarding that seeds the engine**
+- Problem: every personalization surface (For You, Why this?, style
+  portrait) is cold for exactly the audience being impressed first —
+  new users and demo viewers.
+- Proposed improvement: one post-signup screen: "Pick what you'd wear" —
+  a grid of ~9–12 visual tiles for the existing 10 categories (real post
+  photos where available). Selections write small starter scores into
+  userPreferences. For You is personalized and the style portrait has a
+  first sketch from minute one; skippable in one tap.
+- Why it matters: kills the cold start; makes styleMatch reasons appear in
+  "Why this?" immediately; first-run now demonstrates the whole loop.
+- Scope: new Onboarding step (Login.tsx routing or a first-run check),
+  writes via existing saveUserPreferences; no backend or schema change.
+- Complexity: M (mostly one new screen). Expected perception gain: H.
+- Risks: seeded scores must be small enough that real behavior quickly
+  outweighs them; needs a "new user with no user doc flag" heuristic
+  (e.g. userPreferences doc absent) so existing users never see it.
+
+**P3 — Style Portrait header (identity over analytics)**
+- Problem: Style Profile + Insights present identity as charts; the
+  mission's "intelligent portrait of how I dress" exists in the data but
+  is never composed or named.
+- Proposed improvement: a portrait block at the top of Profile (and the
+  top of Style Profile): the user's top 2–3 aesthetics as words ("Vintage ·
+  Streetwear"), an aggregate 5-swatch palette computed from their own
+  analyzed posts' palettes, and their post photos as small supporting
+  imagery. Radar + bars move below as detail; Insights keeps its numbers.
+- Why it matters: turns accumulated data into persistent personal identity
+  (the axis where FitFeed reads most "school project" today); pure
+  composition of existing fields — aesthetics, palettes, photos.
+- Scope: StyleProfile.tsx (+ small aggregation util over the user's
+  posts, which Profile already fetches), Profile.tsx layout.
+- Complexity: M. Expected perception gain: M–H. Risks: sparse data for
+  users with few analyzed posts — needs the Phase A ghost treatment as the
+  degraded state; aggregate palette math must stay honest (no invented
+  colors when analysis is missing).
+
+Explicitly not proposed (mission exclusions): redesigns, rec-engine work,
+chatbots, new social mechanics, infra, mobile apps.
+
+### Axes where FitFeed is already competitive (no proposal needed)
+- Perceived speed: optimistic like/save, Phase A skeletons, stable layouts.
+- Social proof: real content (49 posts), Aura leaderboard, working
+  comments; Phase A removed the awkward zero-state seams.
+- Design cohesion: chips/palette/border language is consistent post-A;
+  intentional differences between social and analytical surfaces are sane.
+
 ## Session log
 - **2026-08-22 (pass 1)**: Diagnosed both Phase 1 bugs + Railway status with
   runtime evidence; implemented image-fallback + profile-loading repairs;
@@ -368,3 +693,26 @@ Commits: `36eadc4` (feature), `52cf5a2` (test ids) — both pushed to
   reasons, Discover/Following correctly show none, zero console errors.
   Committed and pushed both commits. Phase 3b complete. Stopping here as
   instructed — no further phases started.
+- **2026-08-27 (pass 6)**: Polish mission Phase A. Discovered the machine
+  was cleaned (Node, node_modules, service key, Firebase creds all gone);
+  bootstrapped a portable Node into the scratchpad + npm ci. Restored the
+  accidentally-deleted improvement plan from git. Implemented the full
+  empty/loading-state redesign (EmptyState + Skeletons components, wired
+  across Feed/Explore/Profile/PublicProfile/Insights/Leaderboard/
+  PostDetail/StyleProfile/PostCard/App/Login), fixed the StyleProfile
+  rules-of-hooks bug and the eternal "Analyzing outfit..." seam. Build +
+  all 6 Playwright tests green; every new state visually verified at 3
+  widths via a temporary preview harness (deleted after). Stopped at the
+  Phase A boundary (deploy pending credentials at that point).
+- **2026-08-27 (pass 7, same session)**: Phase A committed on new branch
+  `phase-a-polish` (5b88e91). Phase B implemented (author-lookup dedup,
+  targeted author/saved queries, recharts split; −35% initial JS) and
+  committed (faac493). User completed firebase login interactively;
+  deployed hosting and verified Phases A+B live with throwaway signup
+  accounts (deleted via Identity Toolkit REST) — feed skeletons,
+  Following/Saved/Profile/Insights empty states, and the lazy Insights
+  chunk all confirmed on production, zero console errors. Phase C
+  competitive research (Lekondo, Indyx, Acloset-class apps via public
+  listings/reviews) and the 3 prioritized proposals written up. Mission
+  complete: A deployed+verified, B deployed+verified, C proposals
+  recorded. Nothing implemented from C.

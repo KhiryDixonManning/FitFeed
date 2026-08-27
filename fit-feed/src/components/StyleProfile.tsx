@@ -55,22 +55,35 @@ export default function StyleProfile({ preferences }: StyleProfileProps) {
   const hasData = Object.keys(preferences).length > 0 &&
     Object.values(preferences).some(v => v > 0);
 
-  if (!hasData) {
-    return (
-      <div className="border border-[var(--border)] rounded-xl p-6 text-center animate-fade-in">
-        <h3 className="text-lg font-semibold text-[var(--text-h)] mb-1">Style Profile</h3>
-        <p className="text-xs text-[var(--text)] mb-4">Based on your interactions</p>
-        <p className="text-sm text-[var(--text)] opacity-60">
-          Interact with posts to build your style profile
-        </p>
-      </div>
-    );
-  }
-
+  // Hooks must run unconditionally — the empty-state return comes after them,
+  // otherwise React throws when preferences later go from empty to populated.
   const chartData = useMemo(() => buildChartData(preferences), [preferences]);
   const topCategory = useMemo(() => getTopCategory(preferences), [preferences]);
   const topCategories = useMemo(() => getTopCategories(preferences), [preferences]);
   const maxScore = useMemo(() => Math.max(...Object.values(preferences), 1), [preferences]);
+
+  if (!hasData) {
+    return (
+      <div className="border border-[var(--border)] rounded-xl p-6 animate-fade-in">
+        <h3 className="text-lg font-semibold text-[var(--text-h)] mb-1">Style Profile</h3>
+        <p className="text-xs text-[var(--text)] mb-5">Based on your interactions</p>
+        {/* Ghost of the eventual portrait: muted category rows waiting to fill */}
+        <div className="flex flex-col gap-2 mb-5" aria-hidden="true">
+          {RADAR_CATEGORIES.slice(0, 4).map(cat => (
+            <div key={cat} className="flex items-center gap-3">
+              <span className="text-xs text-[var(--text)] opacity-50 capitalize w-20 sm:w-28 shrink-0">
+                {cat}
+              </span>
+              <div className="flex-1 h-2 bg-[var(--border)] rounded-full opacity-50" />
+            </div>
+          ))}
+        </div>
+        <p className="text-sm text-[var(--text)]">
+          Like, save, and comment on fits you love — your style portrait draws itself from what catches your eye.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="border border-[var(--border)] rounded-xl p-6 animate-fade-in">

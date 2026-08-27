@@ -3,6 +3,9 @@ import { getFollowingIds, getSavedPostIds, savePost, unsavePost } from '../Fireb
 import { collection, onSnapshot, query, orderBy, doc, getDoc, type Firestore } from "firebase/firestore";
 import { db } from "../../firebase";
 import PostCard from "../components/PostCard";
+import EmptyState from "../components/EmptyState";
+import { PostCardSkeleton } from "../components/Skeletons";
+import { useNavigate } from "react-router-dom";
 import { recordInteraction } from "../feedService";
 import { toggleLike, getUserPreferences, type Post } from "../FirebaseDB";
 import { CATEGORIES } from "../constants/categories";
@@ -10,25 +13,29 @@ import { PYTHON_API } from '../config';
 
 const fetchAuthorEmails = async (posts: Post[], database: Firestore, existingEmails: Record<string, string> = {}): Promise<Record<string, string>> => {
   const emailMap: Record<string, string> = {};
+  // Dedupe BEFORE fanning out: the map callbacks all start before any
+  // emailMap write lands, so checking emailMap inside them can't prevent
+  // duplicate reads — N posts by one author used to mean N user-doc reads.
+  const authorIds = [...new Set(posts.map(p => p.authorId))]
+    .filter(id => id && !existingEmails[id]);
   await Promise.all(
-    posts.map(async (post) => {
-      if (!post.authorId || existingEmails[post.authorId] || emailMap[post.authorId]) return;
+    authorIds.map(async (authorId) => {
       try {
-        const userDoc = await getDoc(doc(database, 'users', post.authorId));
+        const userDoc = await getDoc(doc(database, 'users', authorId));
         if (userDoc.exists()) {
           const data = userDoc.data();
           if (data.username) {
-            emailMap[post.authorId] = data.username;
+            emailMap[authorId] = data.username;
           } else if (data.email) {
-            emailMap[post.authorId] = data.email.split('@')[0];
+            emailMap[authorId] = data.email.split('@')[0];
           } else {
-            emailMap[post.authorId] = `user_${post.authorId.slice(0, 6)}`;
+            emailMap[authorId] = `user_${authorId.slice(0, 6)}`;
           }
         } else {
-          emailMap[post.authorId] = `user_${post.authorId.slice(0, 6)}`;
+          emailMap[authorId] = `user_${authorId.slice(0, 6)}`;
         }
       } catch {
-        emailMap[post.authorId] = `user_${post.authorId.slice(0, 6)}`;
+        emailMap[authorId] = `user_${authorId.slice(0, 6)}`;
       }
     })
   );
@@ -40,6 +47,7 @@ interface FeedProps {
 }
 
 export default function Feed({ uid }: FeedProps) {
+  const navigate = useNavigate();
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
   const [apiOnline, setApiOnline] = useState(true);
@@ -267,15 +275,39 @@ export default function Feed({ uid }: FeedProps) {
 
         {/* Posts */}
         {loading ? (
-          <div className="text-center text-gray-400 py-12">Loading feed...</div>
-        ) : visiblePosts.length === 0 ? (
-          <div className="text-center text-gray-400 py-12 px-4">
-            {tab === 'following' && followingIds.length === 0
-              ? 'Follow people to see their posts here!'
-              : posts.length === 0
-              ? 'No posts yet. Be the first to share a fit!'
-              : 'No posts in this category yet.'}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 md:gap-6 px-4 md:px-6">
+            {[0, 1, 2, 3].map(i => (
+              <div key={i} className="w-full max-w-2xl mx-auto">
+                <PostCardSkeleton />
+              </div>
+            ))}
           </div>
+        ) : visiblePosts.length === 0 ? (
+          tab === 'following' && followingIds.length === 0 ? (
+            <EmptyState
+              title="Your circle starts here"
+              message="Follow people whose style you admire and their fits will land in this tab."
+              action={{ label: 'Browse Discover', onClick: () => setTab('discover') }}
+            />
+          ) : posts.length === 0 ? (
+            <EmptyState
+              title="The feed is waiting on you"
+              message="Be the first to share a fit — FitFeed reads its colors, garments, and aesthetic the moment it lands."
+              action={{ label: 'Upload a fit', onClick: () => navigate('/upload') }}
+            />
+          ) : selectedCategory !== 'all' ? (
+            <EmptyState
+              title={`Nothing in ${selectedCategory} yet`}
+              message="No fits have been posted in this category so far."
+              action={{ label: 'Show all styles', onClick: () => setSelectedCategory('all') }}
+            />
+          ) : (
+            <EmptyState
+              title="Quiet in here"
+              message="The people you follow haven't posted yet. Discover has plenty in the meantime."
+              action={{ label: 'Browse Discover', onClick: () => setTab('discover') }}
+            />
+          )
         ) : (
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 md:gap-6 px-4 md:px-6">
             {visiblePosts.map((post) => (

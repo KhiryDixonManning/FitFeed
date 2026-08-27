@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
@@ -9,11 +9,15 @@ import Profile from './pages/Profile';
 import PublicProfile from './pages/PublicProfile';
 import Leaderboard from './pages/Leaderboard';
 import PostDetail from './pages/PostDetail';
-import Insights from './pages/Insights';
 import About from './pages/About';
 import Explore from './pages/Explore';
 import Login from './pages/Login';
 import Navbar from './components/Navbar';
+
+// Insights is the only route pulling in recharts' bar-chart machinery —
+// splitting it (plus the lazy StyleProfile in Profile.tsx) keeps the chart
+// library out of the main bundle entirely.
+const Insights = lazy(() => import('./pages/Insights'));
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -37,8 +41,9 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-[var(--text)] text-sm animate-pulse">Loading FitFeed...</div>
+      <div className="flex flex-col items-center justify-center min-h-screen gap-3">
+        <span className="text-2xl font-bold tracking-tight text-[var(--text-h)] animate-pulse">FitFeed</span>
+        <span className="text-xs uppercase tracking-widest text-[var(--text)] opacity-60">Loading</span>
       </div>
     );
   }
@@ -54,7 +59,11 @@ export default function App() {
         <Route path="/profile/:uid" element={user ? <PublicProfile /> : <Navigate to="/login" replace />} />
         <Route path="/leaderboard" element={user ? <Leaderboard /> : <Navigate to="/login" replace />} />
         <Route path="/post/:postId" element={user ? <PostDetail /> : <Navigate to="/login" replace />} />
-        <Route path="/insights" element={user ? <Insights uid={user.uid} /> : <Navigate to="/login" replace />} />
+        <Route path="/insights" element={user ? (
+          <Suspense fallback={null}>
+            <Insights uid={user.uid} />
+          </Suspense>
+        ) : <Navigate to="/login" replace />} />
         <Route path="/about" element={<About />} />
         <Route path="/explore" element={user ? <Explore /> : <Navigate to="/login" replace />} />
         <Route path="*" element={<Navigate to={user ? "/" : "/login"} replace />} />

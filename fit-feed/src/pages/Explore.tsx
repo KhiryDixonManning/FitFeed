@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { getPosts, type Post } from '../FirebaseDB';
 import PostImage from '../components/PostImage';
+import EmptyState from '../components/EmptyState';
+import { GridTileSkeleton } from '../components/Skeletons';
 
 export default function Explore() {
   const [searchParams] = useSearchParams();
@@ -50,12 +52,6 @@ export default function Explore() {
     ? category
     : 'Explore';
 
-  if (loading) return (
-    <div className="flex items-center justify-center min-h-screen">
-      <p className="text-[var(--text)] animate-pulse">Loading...</p>
-    </div>
-  );
-
   return (
     <div className="max-w-2xl mx-auto p-4 pb-24">
       <div className="flex items-center gap-3 mb-6">
@@ -65,14 +61,28 @@ export default function Explore() {
         >
           ← Back
         </button>
-        <h2 className="text-xl font-bold text-[var(--text-h)] capitalize">{title}</h2>
-        <span className="text-xs text-[var(--text)] ml-auto">{posts.length} posts</span>
+        <h2 className="text-2xl font-bold text-[var(--text-h)] capitalize">{title}</h2>
+        {!loading && (
+          <span className="text-xs text-[var(--text)] ml-auto">
+            {posts.length} {posts.length === 1 ? 'post' : 'posts'}
+          </span>
+        )}
       </div>
 
-      {posts.length === 0 ? (
-        <p className="text-[var(--text)] text-sm text-center py-12">
-          No posts found for {title}
-        </p>
+      {loading ? (
+        <div className="grid grid-cols-2 gap-3">
+          {[0, 1, 2, 3, 5, 6].map(i => (
+            <GridTileSkeleton key={i} withCaption={false} />
+          ))}
+        </div>
+      ) : posts.length === 0 ? (
+        <EmptyState
+          title={tag || color || category ? `Nothing tagged ${title} yet` : 'Nothing to explore yet'}
+          message={tag || color || category
+            ? 'As more fits get analyzed, this corner of the catalog will fill in.'
+            : 'Once fits start landing, you can explore them by tag, color, and aesthetic here.'}
+          action={{ label: 'Go back', onClick: () => navigate(-1) }}
+        />
       ) : (
         <div className="grid grid-cols-2 gap-3">
           {posts.map(post => (
