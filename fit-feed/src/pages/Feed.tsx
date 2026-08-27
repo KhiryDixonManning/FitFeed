@@ -13,25 +13,29 @@ import { PYTHON_API } from '../config';
 
 const fetchAuthorEmails = async (posts: Post[], database: Firestore, existingEmails: Record<string, string> = {}): Promise<Record<string, string>> => {
   const emailMap: Record<string, string> = {};
+  // Dedupe BEFORE fanning out: the map callbacks all start before any
+  // emailMap write lands, so checking emailMap inside them can't prevent
+  // duplicate reads — N posts by one author used to mean N user-doc reads.
+  const authorIds = [...new Set(posts.map(p => p.authorId))]
+    .filter(id => id && !existingEmails[id]);
   await Promise.all(
-    posts.map(async (post) => {
-      if (!post.authorId || existingEmails[post.authorId] || emailMap[post.authorId]) return;
+    authorIds.map(async (authorId) => {
       try {
-        const userDoc = await getDoc(doc(database, 'users', post.authorId));
+        const userDoc = await getDoc(doc(database, 'users', authorId));
         if (userDoc.exists()) {
           const data = userDoc.data();
           if (data.username) {
-            emailMap[post.authorId] = data.username;
+            emailMap[authorId] = data.username;
           } else if (data.email) {
-            emailMap[post.authorId] = data.email.split('@')[0];
+            emailMap[authorId] = data.email.split('@')[0];
           } else {
-            emailMap[post.authorId] = `user_${post.authorId.slice(0, 6)}`;
+            emailMap[authorId] = `user_${authorId.slice(0, 6)}`;
           }
         } else {
-          emailMap[post.authorId] = `user_${post.authorId.slice(0, 6)}`;
+          emailMap[authorId] = `user_${authorId.slice(0, 6)}`;
         }
       } catch {
-        emailMap[post.authorId] = `user_${post.authorId.slice(0, 6)}`;
+        emailMap[authorId] = `user_${authorId.slice(0, 6)}`;
       }
     })
   );

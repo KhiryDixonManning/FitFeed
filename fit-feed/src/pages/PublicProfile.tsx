@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getPosts, toggleLike, getUserPreferences, type Post, followUser, unfollowUser, isFollowing, getFollowerCount, getFollowingCount } from '../FirebaseDB';
+import { getPostsByAuthor, toggleLike, getUserPreferences, type Post, followUser, unfollowUser, isFollowing, getFollowerCount, getFollowingCount } from '../FirebaseDB';
 import { recordInteraction } from '../feedService';
 import { auth, db } from '../../firebase';
 import { doc, getDoc } from 'firebase/firestore';
@@ -42,15 +42,15 @@ export default function PublicProfile() {
           // user doc may not exist for older accounts
         }
 
-        const [allPosts, prefs, isFollowingUser, followerCountResult, followingCountResult] = await Promise.all([
-          getPosts(),
+        const [authorPosts, prefs, isFollowingUser, followerCountResult, followingCountResult] = await Promise.all([
+          getPostsByAuthor(uid),
           getUserPreferences(uid),
           currentUid && currentUid !== uid ? isFollowing(currentUid, uid) : Promise.resolve(false),
           getFollowerCount(uid),
           getFollowingCount(uid),
         ]);
 
-        setPosts(allPosts.filter(p => p.authorId === uid));
+        setPosts(authorPosts);
 
         if (Object.keys(prefs).length > 0) {
           const top = Object.entries(prefs).sort((a, b) => b[1] - a[1])[0][0];

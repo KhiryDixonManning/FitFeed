@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getPosts, type Post } from '../FirebaseDB';
+import { getPostsByAuthor, type Post } from '../FirebaseDB';
 import { auth } from '../../firebase';
 import PostImage from '../components/PostImage';
 import EmptyState from '../components/EmptyState';
@@ -20,9 +20,7 @@ export default function Insights({ uid }: InsightsProps) {
 
   useEffect(() => {
     const load = async () => {
-      const all = await getPosts();
-      const mine = all.filter(p => p.authorId === uid);
-      setPosts(mine);
+      setPosts(await getPostsByAuthor(uid));
       setLoading(false);
     };
     load();

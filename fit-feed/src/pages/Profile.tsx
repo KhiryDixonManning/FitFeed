@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { getPosts, toggleLike, getUserPreferences, deletePost, getFollowerCount, getFollowingCount, getSavedPostIds, unsavePost } from '../FirebaseDB';
+import { getPostsByAuthor, getPostsByIds, toggleLike, getUserPreferences, deletePost, getFollowerCount, getFollowingCount, getSavedPostIds, unsavePost } from '../FirebaseDB';
 import type { Post } from '../FirebaseDB';
 import { recordInteraction } from '../feedService';
+import { lazy, Suspense } from 'react';
 import { auth, db } from '../../firebase';
-import StyleProfile from '../components/StyleProfile';
+// Lazy so recharts (radar chart) stays out of the main bundle — the chunk
+// loads in parallel with the profile's Firestore reads.
+const StyleProfile = lazy(() => import('../components/StyleProfile'));
 import PostImage from '../components/PostImage';
 import EmptyState from '../components/EmptyState';
 import { ProfileHeaderSkeleton, GridTileSkeleton } from '../components/Skeletons';
@@ -42,21 +45,20 @@ export default function Profile({ uid }: ProfileProps) {
     const load = async () => {
       // Any single failed read must never leave the page stuck on the spinner
       try {
-        const allPosts = await getPosts();
-        const myPosts = allPosts.filter(p => p.authorId === uid);
-        setPosts(myPosts);
-
-        const [prefs, fCount, fgCount, savedIds] = await Promise.all([
+        // Targeted queries: only this user's posts + only the saved ids —
+        // not the whole posts collection filtered client-side.
+        const [myPosts, prefs, fCount, fgCount, savedIds] = await Promise.all([
+          getPostsByAuthor(uid),
           getUserPreferences(uid),
           getFollowerCount(uid),
           getFollowingCount(uid),
           getSavedPostIds(uid),
         ]);
+        setPosts(myPosts);
         setUserPreferences(prefs);
         setFollowerCount(fCount);
         setFollowingCount(fgCount);
-        const savedIdSet = new Set(savedIds);
-        setSavedPosts(allPosts.filter(p => savedIdSet.has(p.id)));
+        setSavedPosts(await getPostsByIds(savedIds));
 
         // Load username and avatar from users collection
         if (auth.currentUser) {
@@ -255,7 +257,9 @@ export default function Profile({ uid }: ProfileProps) {
 
       {/* Style Profile */}
       <div className="mb-6 px-4 md:px-0">
-        <StyleProfile preferences={userPreferences} />
+        <Suspense fallback={<div className="border border-[var(--border)] rounded-xl h-40 animate-pulse" />}>
+          <StyleProfile preferences={userPreferences} />
+        </Suspense>
       </div>
 
       {/* Demo Controls — dev only */}

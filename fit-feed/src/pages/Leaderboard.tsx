@@ -23,26 +23,27 @@ export default function Leaderboard() {
       setPosts(trending);
       setFiltered(trending);
 
-      // Batch-fetch author display names (prefer username, fall back to email prefix)
+      // Batch-fetch author display names (prefer username, fall back to email
+      // prefix). Dedupe authorIds before fanning out — the concurrent callbacks
+      // can't see each other's writes, so a per-post guard doesn't dedupe.
       const emailMap: Record<string, string> = {};
+      const authorIds = [...new Set(trending.map(p => p.authorId).filter(Boolean))];
       await Promise.all(
-        trending.map(async (post) => {
-          if (!emailMap[post.authorId]) {
-            try {
-              const userDoc = await getDoc(doc(db, 'users', post.authorId));
-              if (userDoc.exists()) {
-                const data = userDoc.data();
-                emailMap[post.authorId] = data.username
-                  ? data.username
-                  : data.email
-                    ? data.email.split('@')[0]
-                    : `user_${post.authorId.slice(0, 6)}`;
-              } else {
-                emailMap[post.authorId] = `user_${post.authorId.slice(0, 6)}`;
-              }
-            } catch {
-              emailMap[post.authorId] = `user_${post.authorId.slice(0, 6)}`;
+        authorIds.map(async (authorId) => {
+          try {
+            const userDoc = await getDoc(doc(db, 'users', authorId));
+            if (userDoc.exists()) {
+              const data = userDoc.data();
+              emailMap[authorId] = data.username
+                ? data.username
+                : data.email
+                  ? data.email.split('@')[0]
+                  : `user_${authorId.slice(0, 6)}`;
+            } else {
+              emailMap[authorId] = `user_${authorId.slice(0, 6)}`;
             }
+          } catch {
+            emailMap[authorId] = `user_${authorId.slice(0, 6)}`;
           }
         })
       );

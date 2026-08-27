@@ -437,6 +437,84 @@ as a design decision, not an omission).
   is either a repair of a broken/flat state or matches existing visual
   language (chips, borders, --accent).
 
+## Phase B — Performance audit (COMPLETE locally, 2026-08-27)
+
+### Findings (Location / Observed / Why / Evidence / Smallest fix)
+
+**F1 — Author-lookup fan-out with a broken dedup guard (IMPLEMENTED)**
+- Location: `Feed.tsx fetchAuthorEmails`, `Leaderboard.tsx` load effect.
+- Observed: `posts.map(async p => { if (emailMap[p.authorId]) return; await
+  getDoc(users/p.authorId) ... })` — all callbacks start before any
+  `emailMap` write lands, so the guard never dedupes concurrent reads:
+  N posts by one author = N user-doc reads, every first load of Feed and
+  Leaderboard.
+- Why: Firestore reads scale with post count instead of author count on
+  the two highest-traffic screens (49 posts today, grows unbounded).
+- Evidence: code inspection — the race is deterministic (guard checks a
+  map that is only written after each await; JS runs the map callbacks
+  synchronously up to their first await before any resolves).
+- Fix: dedupe to `[...new Set(authorIds)]` before fanning out. Reads drop
+  from #posts to #unique-authors (49 → single digits on current data).
+
+**F2 — Full-collection getPosts() filtered client-side (IMPLEMENTED)**
+- Location: `Profile.tsx`, `PublicProfile.tsx`, `Insights.tsx` (each did
+  `getPosts()` then `.filter(p => p.authorId === uid)`); Profile's saved
+  tab filtered the same full download against saved ids.
+- Observed: every visit to any profile or Insights downloaded the entire
+  posts collection (49 docs today, unbounded growth) to keep ≤ a handful.
+- Why: reads + payload scale with total app content, not the user's own.
+- Evidence: code inspection (queries are unconditional getDocs of the whole
+  ordered collection — see FirebaseDB.getPosts).
+- Fix: new `getPostsByAuthor(uid)` (`where('authorId','==',uid)`, no
+  orderBy so the automatic index suffices — sorted client-side) and
+  `getPostsByIds(ids)` (`where(documentId(),'in',chunk)` in chunks of 30)
+  in FirebaseDB.ts; wired into all three pages. Per-visit reads drop from
+  49+ to (own posts) / (saved count). Feed/Explore/Leaderboard/feedService
+  still fetch the full set — the ranking pipeline and tag/color filters
+  legitimately need broad post data (per mission guidance, not touched).
+
+**F3 — recharts in the critical bundle (IMPLEMENTED)**
+- Location: `App.tsx` (Insights route), `Profile.tsx` (StyleProfile).
+- Observed: single 1,063,358-byte JS chunk; recharts is only used by
+  Insights + StyleProfile, but every visitor paid for it on first paint.
+- Evidence: build output before/after (below); `grep recharts src` → only
+  those two files.
+- Fix: `React.lazy` for the Insights route (Suspense fallback null — the
+  page renders its own skeleton) and for StyleProfile inside Profile
+  (fallback = the same h-40 bordered pulse block used while loading).
+- **Before**: 1 chunk, 1,063,358 B. **After**: eager = index 249,860 +
+  shared chunk 424,855 + jsx-runtime 12,007 = 686,722 B (**−35%**);
+  deferred to their routes: CategoricalChart 241,670 + Insights 106,582 +
+  StyleProfile 32,821.
+
+### Documented but NOT implemented (below the top-3 cut)
+- `PostCard` is memo()'d but Feed passes freshly-created arrow callbacks
+  (`onLike={() => handleLike(post)}` etc.) so memo never bails out. Real
+  but cheap today (list is one page, cards are light to re-render);
+  fixing properly means stable per-post callbacks — revisit if the feed
+  gets long/virtualized.
+- `getFollowerCount`/`getFollowingCount` download all follow docs for
+  `.size` — `getCountFromServer` aggregate would make it 0 doc reads.
+- `recordInteraction` does read-modify-write on userPreferences; a
+  `setDoc(..., { [category]: increment(n) }, { merge: true })` saves the
+  read on every like/comment.
+- `PostDetail.handleShowLikers` fetches up to 20 liker docs sequentially
+  in a for-await loop (latency, not read count).
+- `/health` is pinged both by `config.ts` (every 4 min) and Feed on mount.
+- Feed's onSnapshot re-POSTs the entire posts array to `/rank` on every
+  collection change (any like anywhere); debounced 300 ms; part of the
+  ranking design — left alone per mission.
+
+### Verification
+- Build passes; all 6 Playwright UI tests pass after the changes.
+- The 2 `api` project tests fail because they target `http://localhost:5000`
+  (local Flask) and the python venv no longer exists on this machine —
+  pre-existing environmental failure, unrelated; production Railway
+  `/health` returns `{"status":"ok"}` (checked directly).
+- Bundle before/after measured above (the one instrumentable metric
+  without production auth on this machine); F1/F2 read counts are
+  deterministic from query semantics.
+
 ## Session log
 - **2026-08-22 (pass 1)**: Diagnosed both Phase 1 bugs + Railway status with
   runtime evidence; implemented image-fallback + profile-loading repairs;
