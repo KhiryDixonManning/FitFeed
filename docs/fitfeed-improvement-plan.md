@@ -2,11 +2,10 @@
 
 > Read this first each session. Don't re-derive anything recorded here.
 > Last updated: 2026-08-27. Phase 1, 1B, Phase 3 (saved outfits), Phase 3b
-> (why-recommended), and Phase A of the polish mission (empty/loading
-> states) are COMPLETE. Phase A changes are built + tested locally but NOT
-> committed and NOT deployed — this machine currently has no deploy
-> credentials (see Phase A → Environment). Phases B (performance) and C
-> (competitive proposals) not started.
+> (why-recommended), and polish-mission Phases A (empty/loading states)
+> and B (performance) are COMPLETE, committed on branch `phase-a-polish`
+> (5b88e91 = A, faac493 = B), DEPLOYED to production and VERIFIED live
+> on 2026-08-27 (see "Deployment status" below).
 
 ## Phase 1 / 1B — VERIFIED FIXED (2026-08-22, second pass)
 - User fixed Firebase billing. Re-ran `diagnose_posts.py`: all sampled images
@@ -515,6 +514,143 @@ as a design decision, not an omission).
   without production auth on this machine); F1/F2 read counts are
   deterministic from query semantics.
 
+## Deployment status — Phases A + B (2026-08-27)
+- User completed `firebase login` interactively (account
+  khiry.dixon-manning@atlasstudents.com, portable-Node workaround); deployed
+  via `firebase deploy --only hosting` → release complete,
+  https://fitfeed-67ee8.web.app.
+- Live verification with throwaway accounts created through the real
+  signup UI and deleted afterward via the Identity Toolkit REST API
+  (`accounts:delete` with the account's own idToken — works without the
+  missing admin key; note for future sessions):
+  - Feed loading skeletons observed live under a throttled connection;
+    Following-tab "Your circle starts here" and Saved "Nothing saved yet"
+    empty states render (screenshots).
+  - Profile renders skeleton → "No fits on record" + style-portrait ghost.
+  - Insights route lazy-loads its chunk on production
+    (`Insights-B3MXbJJE.js` observed in the network log) and renders the
+    "Your numbers arrive with your first fit" empty state.
+  - Zero console errors across all checks; all diagnostic accounts deleted.
+- Verification gotcha recorded: under network throttling, full page.goto
+  navigations re-bootstrap the SPA (Firebase auth handshake each time) and
+  can exceed 20s — verify via in-app navigation and generous waits.
+
+## Phase C — Competitive polish proposals (COMPLETE, 2026-08-27 — proposals only, NOT implemented)
+
+### Public patterns inspected (app-store listings + published reviews; no
+### private/inaccessible product surfaces were guessed at)
+
+**Pattern 1 — Onboarding that seeds taste (Lekondo, Indyx)**
+- They do: Lekondo's onboarding has users "discover personal colors and
+  aesthetics while establishing their style profile"; Indyx runs a style
+  quiz (pick outfits that resonate) that outputs "3 style words" shown on
+  every profile.
+- FitFeed currently does: bare email/password + one tagline. Preferences
+  start at zero; For You is unpersonalized, the style portrait is an empty
+  ghost, and "Why this?" shows only community signals until the user has
+  liked/commented for a while.
+- Lesson: strong products never show a cold personalization engine — they
+  collect a minute of taste input up front and pay it back instantly.
+- FitFeed adaptation: a visual taste-pick step after signup seeding the
+  EXISTING userPreferences model (no schema change — it's the same
+  category→score map the ranking engine already consumes).
+
+**Pattern 2 — Analysis as a product moment (Lekondo)**
+- They do: post a fit → the app "picks out the items you're wearing" and
+  presents an instant, legible breakdown; reviewers praise that it "nails
+  the vibe and colors of each fit" — the reveal IS the product.
+- FitFeed currently does: upload → redirect to feed → analysis fields
+  silently pop into the card whenever Flask finishes. The app's most
+  impressive capability lands as ambient data, easy to miss entirely.
+- Lesson: the moment between photo and analysis is the emotional peak;
+  staging it (anticipation → reveal hierarchy) is what makes AI feel like
+  craft instead of metadata.
+- FitFeed adaptation: land on the new post's detail page and choreograph
+  the existing fields as they arrive (palette sweeps in, outfit name as
+  the editorial title, then chips) — presentation only, same pipeline.
+
+**Pattern 3 — Style identity as a named, human artifact (Indyx)**
+- They do: "3 style words" — a compact verbal identity that appears on
+  every profile and makes taste legible and shareable at a glance.
+- FitFeed currently does: identity is distributed across a radar chart
+  (Style Profile), stat tiles (Insights), and per-post data; accurate but
+  it reads as measurement, not portrait. Nothing names the user's style.
+- Lesson: aggregated data becomes identity when it's composed and NAMED —
+  words + a palette beat five charts.
+- FitFeed adaptation: derive a headline identity (dominant aesthetics as
+  words + the user's aggregate palette from their own analyzed posts) and
+  lead the Profile/Style Profile with it; keep the radar as supporting
+  detail below.
+
+### Proposals (exactly 3, prioritized by perception-gain per effort)
+
+**P1 — Stage the analysis reveal (highest priority)**
+- Problem: the AI analysis — FitFeed's differentiator — arrives silently
+  in a feed card. A first-time poster (or recruiter watching a demo) can
+  miss the product's best moment entirely.
+- Proposed improvement: after publish, navigate to the new post's detail
+  page in a "reading your fit" state (the Phase A shimmer language,
+  full-page composition). As the Firestore doc updates, reveal in stages:
+  color palette cards first, then the italic outfit name as the page
+  title, then aesthetic-composition chips and notes. One short staged
+  sequence, ~2–4s of choreography over data that already arrives async.
+- Why it matters: converts the strongest backend capability into the
+  product's signature moment; also gives the upload flow a natural
+  destination (currently it dumps you back at the feed).
+- Scope: Upload.tsx (redirect target), PostDetail.tsx (pending/staged
+  states; it already has the skeleton + all analysis sections), a
+  Firestore onSnapshot on the single new post doc.
+- Complexity: M. Expected perception gain: H. Risks: analysis can take
+  long or fail — needs honest timeout copy ("still reading — check back")
+  falling back to the normal detail page; must not block interaction.
+
+**P2 — Taste-pick onboarding that seeds the engine**
+- Problem: every personalization surface (For You, Why this?, style
+  portrait) is cold for exactly the audience being impressed first —
+  new users and demo viewers.
+- Proposed improvement: one post-signup screen: "Pick what you'd wear" —
+  a grid of ~9–12 visual tiles for the existing 10 categories (real post
+  photos where available). Selections write small starter scores into
+  userPreferences. For You is personalized and the style portrait has a
+  first sketch from minute one; skippable in one tap.
+- Why it matters: kills the cold start; makes styleMatch reasons appear in
+  "Why this?" immediately; first-run now demonstrates the whole loop.
+- Scope: new Onboarding step (Login.tsx routing or a first-run check),
+  writes via existing saveUserPreferences; no backend or schema change.
+- Complexity: M (mostly one new screen). Expected perception gain: H.
+- Risks: seeded scores must be small enough that real behavior quickly
+  outweighs them; needs a "new user with no user doc flag" heuristic
+  (e.g. userPreferences doc absent) so existing users never see it.
+
+**P3 — Style Portrait header (identity over analytics)**
+- Problem: Style Profile + Insights present identity as charts; the
+  mission's "intelligent portrait of how I dress" exists in the data but
+  is never composed or named.
+- Proposed improvement: a portrait block at the top of Profile (and the
+  top of Style Profile): the user's top 2–3 aesthetics as words ("Vintage ·
+  Streetwear"), an aggregate 5-swatch palette computed from their own
+  analyzed posts' palettes, and their post photos as small supporting
+  imagery. Radar + bars move below as detail; Insights keeps its numbers.
+- Why it matters: turns accumulated data into persistent personal identity
+  (the axis where FitFeed reads most "school project" today); pure
+  composition of existing fields — aesthetics, palettes, photos.
+- Scope: StyleProfile.tsx (+ small aggregation util over the user's
+  posts, which Profile already fetches), Profile.tsx layout.
+- Complexity: M. Expected perception gain: M–H. Risks: sparse data for
+  users with few analyzed posts — needs the Phase A ghost treatment as the
+  degraded state; aggregate palette math must stay honest (no invented
+  colors when analysis is missing).
+
+Explicitly not proposed (mission exclusions): redesigns, rec-engine work,
+chatbots, new social mechanics, infra, mobile apps.
+
+### Axes where FitFeed is already competitive (no proposal needed)
+- Perceived speed: optimistic like/save, Phase A skeletons, stable layouts.
+- Social proof: real content (49 posts), Aura leaderboard, working
+  comments; Phase A removed the awkward zero-state seams.
+- Design cohesion: chips/palette/border language is consistent post-A;
+  intentional differences between social and analytical surfaces are sane.
+
 ## Session log
 - **2026-08-22 (pass 1)**: Diagnosed both Phase 1 bugs + Railway status with
   runtime evidence; implemented image-fallback + profile-loading repairs;
@@ -566,5 +702,17 @@ as a design decision, not an omission).
   PostDetail/StyleProfile/PostCard/App/Login), fixed the StyleProfile
   rules-of-hooks bug and the eternal "Analyzing outfit..." seam. Build +
   all 6 Playwright tests green; every new state visually verified at 3
-  widths via a temporary preview harness (deleted after). NOT deployed —
-  no credentials on this machine. Stopped at the Phase A boundary.
+  widths via a temporary preview harness (deleted after). Stopped at the
+  Phase A boundary (deploy pending credentials at that point).
+- **2026-08-27 (pass 7, same session)**: Phase A committed on new branch
+  `phase-a-polish` (5b88e91). Phase B implemented (author-lookup dedup,
+  targeted author/saved queries, recharts split; −35% initial JS) and
+  committed (faac493). User completed firebase login interactively;
+  deployed hosting and verified Phases A+B live with throwaway signup
+  accounts (deleted via Identity Toolkit REST) — feed skeletons,
+  Following/Saved/Profile/Insights empty states, and the lazy Insights
+  chunk all confirmed on production, zero console errors. Phase C
+  competitive research (Lekondo, Indyx, Acloset-class apps via public
+  listings/reviews) and the 3 prioritized proposals written up. Mission
+  complete: A deployed+verified, B deployed+verified, C proposals
+  recorded. Nothing implemented from C.
