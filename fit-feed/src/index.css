@@ -156,6 +156,21 @@ code {
   animation: fadeIn 0.4s ease-out forwards;
 }
 
+/* Staged analysis reveal: sections settle in as real data arrives, offset
+   by --d per section. Runs once (forwards), only applied on live reveals. */
+.reveal-item {
+  opacity: 0;
+  animation: fadeIn 0.55s ease-out forwards;
+  animation-delay: var(--d, 0s);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal-item {
+    animation-duration: 0.01s;
+    animation-delay: 0s;
+  }
+}
+
 .safe-area-bottom {
   padding-bottom: max(8px, env(safe-area-inset-bottom));
 }

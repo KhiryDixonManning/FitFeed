@@ -1,6 +1,6 @@
-import { useEffect, useState, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { doc, getDoc } from 'firebase/firestore';
+import { useEffect, useState, useMemo, useRef } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { db, auth } from '../../firebase';
 import { type Post, toggleLike, getComments, addComment, type Comment, deletePost, isPostSaved, savePost, unsavePost } from '../FirebaseDB';
 import { recordInteraction } from '../feedService';
@@ -118,9 +118,24 @@ const normalizeColor = (color: any): { hex: string; name: string; percentage: nu
   };
 };
 
+// Staged-reveal states for a just-published post:
+// idle      — normal visit, everything renders statically
+// waiting   — analysis in flight: shimmer where the palette will land
+// animating — analysis arrived on this view: sections settle in staggered
+// timeout   — took too long: honest copy, post fully usable, still listening
+// failed    — pipeline reported failure: honest copy, no shimmer
+type RevealState = 'idle' | 'waiting' | 'animating' | 'timeout' | 'failed';
+
 export default function PostDetail() {
   const { postId } = useParams<{ postId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
+  const justPublished = Boolean((location.state as { justPublished?: boolean } | null)?.justPublished);
+  const [reveal, setReveal] = useState<RevealState>(justPublished ? 'waiting' : 'idle');
+  // Animate only when THIS view watched the post go unanalyzed → analyzed.
+  // history state survives reloads, so justPublished alone would replay the
+  // animation on a refresh of an already-analyzed post.
+  const sawUnanalyzedRef = useRef(false);
   const [post, setPost] = useState<Post | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState('');
@@ -154,51 +169,77 @@ export default function PostDetail() {
 
     window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
 
-    const load = async () => {
-      try {
-        const [postSnap, commentsResult] = await Promise.all([
-          getDoc(doc(db, 'posts', postId)),
-          getComments(postId),
-        ]);
-
-        if (!postSnap.exists()) {
-          setLoading(false);
-          return;
-        }
-
-        const data = {
-          id: postSnap.id,
-          ...postSnap.data(),
-          createdAt: postSnap.data().createdAt?.toDate?.()?.toISOString() ?? new Date().toISOString(),
-        } as Post;
-        setPost(data);
-        setComments(commentsResult);
-
-        // Fetch author info after post is set
-        const userSnap = await getDoc(doc(db, 'users', data.authorId));
-        if (userSnap.exists()) {
-          const userData = userSnap.data();
-          setAuthorEmail(userData.email || data.authorId);
-          setAuthorUsername(userData.username || '');
-          setAuthorPhotoURL(userData.photoURL || '');
-        } else {
-          setAuthorEmail(`user_${data.authorId.slice(0, 6)}`);
-        }
-
-        if (uid) {
-          setSaved(await isPostSaved(uid, data.id));
-        }
-      } catch (error) {
-        console.error('[PostDetail] Load error:', error);
-      } finally {
+    // Live listener (not a one-shot get): a just-published post's analysis
+    // fields stream in through the same snapshot flow the feed uses.
+    const guard = setTimeout(() => setLoading(false), 6000);
+    const unsubscribe = onSnapshot(doc(db, 'posts', postId), (snap) => {
+      clearTimeout(guard);
+      if (!snap.exists()) {
+        setPost(null);
         setLoading(false);
+        return;
       }
-    };
+      const data = {
+        id: snap.id,
+        ...snap.data(),
+        createdAt: snap.data().createdAt?.toDate?.()?.toISOString() ?? new Date().toISOString(),
+      } as Post;
+      setPost(data);
+      setLoading(false);
+      // Reveal transitions only apply to the just-published flow
+      if (!data.analyzed) sawUnanalyzedRef.current = true;
+      setReveal(prev => {
+        if (prev === 'idle' || prev === 'animating' || prev === 'failed') return prev;
+        // Already analyzed before we ever saw it pending (e.g. a reload
+        // after analysis finished): compose statically, no replay.
+        if (data.analyzed) return sawUnanalyzedRef.current ? 'animating' : 'idle';
+        if (data.analysisStatus === 'failed') return 'failed';
+        return prev;
+      });
+    }, (error) => {
+      console.error('[PostDetail] Snapshot error:', error);
+      clearTimeout(guard);
+      setLoading(false);
+    });
 
-    const timeout = setTimeout(() => setLoading(false), 6000);
-    load().then(() => clearTimeout(timeout));
-    return () => clearTimeout(timeout);
+    getComments(postId).then(setComments);
+
+    return () => {
+      unsubscribe();
+      clearTimeout(guard);
+    };
   }, [postId]);
+
+  // Honest wait: if analysis hasn't landed after 30s, stop shimmering and
+  // say so — the listener stays attached, so a late arrival still reveals.
+  useEffect(() => {
+    if (reveal !== 'waiting') return;
+    const t = setTimeout(() => {
+      setReveal(prev => (prev === 'waiting' ? 'timeout' : prev));
+    }, 30000);
+    return () => clearTimeout(t);
+  }, [reveal]);
+
+  // Author + saved lookups are one-shot; run once the author is known
+  const authorId = post?.authorId;
+  useEffect(() => {
+    if (!authorId) return;
+    getDoc(doc(db, 'users', authorId)).then(userSnap => {
+      if (userSnap.exists()) {
+        const userData = userSnap.data();
+        setAuthorEmail(userData.email || authorId);
+        setAuthorUsername(userData.username || '');
+        setAuthorPhotoURL(userData.photoURL || '');
+      } else {
+        setAuthorEmail(`user_${authorId.slice(0, 6)}`);
+      }
+    }).catch(() => setAuthorEmail(`user_${authorId.slice(0, 6)}`));
+  }, [authorId]);
+
+  useEffect(() => {
+    if (!uid || !postId) return;
+    isPostSaved(uid, postId).then(setSaved);
+  }, [uid, postId]);
 
   const handleLike = async () => {
     if (!post || !uid) return;
@@ -279,6 +320,13 @@ export default function PostDetail() {
     setLikerEmails(emails);
     setLoadingLikers(false);
   };
+
+  // Staged reveal: extra class + per-section delay, only while animating a
+  // live arrival. Idle/revisit renders get empty values — zero motion.
+  const revealing = reveal === 'animating';
+  const revealCls = revealing ? ' reveal-item' : '';
+  const revealDelay = (i: number): React.CSSProperties | undefined =>
+    revealing ? ({ '--d': `${i * 0.25}s` } as React.CSSProperties) : undefined;
 
   if (loading) return (
     <div className="max-w-lg mx-auto pb-24 animate-pulse">
@@ -415,12 +463,17 @@ export default function PostDetail() {
           </p>
         )}
 
-        {/* Outfit name as hero title */}
-        <h1 className="text-xl font-bold text-[var(--text-h)] mb-2">
+        {/* Outfit name as hero title — keyed so a live arrival fades the
+            caption into the studio-given name instead of hard-swapping */}
+        <h1
+          key={post.outfitName ? 'named' : 'caption'}
+          className={`text-xl font-bold text-[var(--text-h)] mb-2${post.outfitName ? revealCls : ''}`}
+          style={post.outfitName ? revealDelay(1) : undefined}
+        >
           {post.outfitName || post.content}
         </h1>
         {post.outfitName && post.content && (
-          <p className="text-sm text-[var(--text)] mb-3">{post.content}</p>
+          <p className={`text-sm text-[var(--text)] mb-3${revealCls}`} style={revealDelay(1)}>{post.content}</p>
         )}
 
         {/* Outfit breakdown */}
@@ -428,9 +481,48 @@ export default function PostDetail() {
           <p className="text-sm text-[var(--text)] mb-4">{post.outfitBreakdown}</p>
         )}
 
+        {/* Live analysis wait — occupies the palette's slot so the real
+            cards land without layout shift. Honest states, never an
+            infinite shimmer. */}
+        {reveal === 'waiting' && !post.analyzed && (
+          <div className="mb-4">
+            <div className="flex items-center gap-1.5 mb-3">
+              <div className="w-2 h-2 rounded-full bg-[var(--accent)] animate-pulse" />
+              <span className="text-xs text-[var(--text)] opacity-60">
+                Reading this fit — palette and aesthetics on the way
+              </span>
+            </div>
+            <div className="flex gap-2 animate-pulse" aria-hidden="true">
+              {[0, 1, 2].map(i => (
+                <div key={i} className="flex-1 rounded-xl bg-[var(--border)] opacity-60" style={{ minHeight: '80px' }} />
+              ))}
+            </div>
+          </div>
+        )}
+        {reveal === 'timeout' && !post.analyzed && (
+          <div className="border border-[var(--border)] rounded-xl p-4 mb-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text)] mb-1">
+              Still reading
+            </p>
+            <p className="text-sm text-[var(--text)] leading-relaxed">
+              This one's taking longer than usual. Your fit is live — the palette and aesthetics will appear here once the reading lands.
+            </p>
+          </div>
+        )}
+        {reveal === 'failed' && !post.analyzed && (
+          <div className="border border-[var(--border)] rounded-xl p-4 mb-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text)] mb-1">
+              No reading this time
+            </p>
+            <p className="text-sm text-[var(--text)] leading-relaxed">
+              The analysis didn't come through for this fit. It's live everywhere it should be — the palette and aesthetics just won't show here.
+            </p>
+          </div>
+        )}
+
         {/* FIX 7: Aesthetic / category badge clickable */}
         {post.aesthetic && (
-          <div className="mb-3">
+          <div className={`mb-3${revealCls}`} style={revealDelay(2)}>
             <button
               onClick={() => navigate(`/explore?category=${encodeURIComponent(post.aesthetic!)}`)}
               className="text-xs bg-[var(--accent)] text-white rounded-full px-3 py-1 capitalize hover:opacity-80 transition"
@@ -442,7 +534,7 @@ export default function PostDetail() {
 
         {/* Color Palette Cards — FIX 9: clickable */}
         {post.palette && post.palette.length > 0 && (
-          <div className="flex gap-2 mb-4">
+          <div className={`flex gap-2 mb-4${revealCls}`} style={revealDelay(0)}>
             {post.palette.map((color, i) => {
               const c = normalizeColor(color);
               const isLight = c.hex === '#FFFFFF' || c.hex === '#ffffff' ||
@@ -480,7 +572,7 @@ export default function PostDetail() {
 
         {/* FIX 13: Compact aesthetic composition chips */}
         {post.aestheticScores && Object.keys(post.aestheticScores).length > 0 && (
-          <div className="mb-4">
+          <div className={`mb-4${revealCls}`} style={revealDelay(2)}>
             <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text)] mb-2">
               Aesthetic Composition
             </p>
@@ -511,7 +603,7 @@ export default function PostDetail() {
 
         {/* Notes on Composition */}
         {post.styleNotes && (
-          <div className="border border-[var(--border)] rounded-xl p-4 mb-4">
+          <div className={`border border-[var(--border)] rounded-xl p-4 mb-4${revealCls}`} style={revealDelay(3)}>
             <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text)] mb-2">
               Notes on Composition
             </p>
@@ -521,7 +613,7 @@ export default function PostDetail() {
 
         {/* FIX 7: Aesthetic tags — clickable */}
         {post.aestheticTags && post.aestheticTags.length > 0 && (
-          <div className="flex gap-2 flex-wrap mb-4">
+          <div className={`flex gap-2 flex-wrap mb-4${revealCls}`} style={revealDelay(3)}>
             {post.aestheticTags.map((tag, i) => (
               <button
                 key={i}
@@ -536,7 +628,7 @@ export default function PostDetail() {
 
         {/* Detected items */}
         {post.detectedItems && post.detectedItems.length > 0 && (
-          <div className="mb-4">
+          <div className={`mb-4${revealCls}`} style={revealDelay(3)}>
             <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text)] mb-2">
               Detected Items
             </p>
@@ -546,12 +638,12 @@ export default function PostDetail() {
 
         {/* Style description */}
         {post.styleDescription && (
-          <p className="text-sm italic text-[var(--text)] mb-4">{post.styleDescription}</p>
+          <p className={`text-sm italic text-[var(--text)] mb-4${revealCls}`} style={revealDelay(3)}>{post.styleDescription}</p>
         )}
 
         {/* Shop Similar */}
         {post.detectedItems && post.detectedItems.length > 0 && post.aesthetic && (
-          <div className="border border-[var(--border)] rounded-xl p-4 mb-4">
+          <div className={`border border-[var(--border)] rounded-xl p-4 mb-4${revealCls}`} style={revealDelay(3)}>
             <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text)] mb-3">
               Shop Similar
             </p>
