@@ -185,7 +185,7 @@ layers exist to make sure it happens exactly once per post:
 | --- | --- |
 | npm, production (`npm audit --omit=dev`) | **0 vulnerabilities** |
 | npm, including dev | 10 advisories, all in `firebase-tools` and `vitest` |
-| Python (`pip-audit`) | Runs in CI; see note below |
+| Python (`pip-audit`) | **0 vulnerabilities** after patching |
 
 The remaining npm advisories are dev-only and the fix npm offers is a
 **downgrade of `firebase-tools` from 14.x to 10.1.1** — four major versions
@@ -197,7 +197,22 @@ is declined and recorded here instead.
 `pip-audit` cannot run on the current development machine: a TLS-intercepting
 corporate proxy makes Python unable to verify `pypi.org` (the substituted CA
 chain lacks an Authority Key Identifier, which Python rejects and Node does
-not). It runs in CI, where egress is clean.
+not). It runs in CI, where egress is clean — and its first run there earned
+its place, reporting **24 advisories across three production packages** that
+were invisible locally:
+
+| Package | Was | Now | Advisories cleared |
+| --- | --- | --- | --- |
+| Flask | 3.0.0 | 3.1.3 | PYSEC-2026-2151 |
+| Werkzeug | 3.0.1 | 3.1.6 | PYSEC-2026-1860, -2043, -2044, -2045, -2046, -2320, -3417 |
+| flask-cors | 4.0.0 | 6.0.0 | PYSEC-2024-71, -271, PYSEC-2026-1383, -1384, -1385 |
+
+flask-cors crosses a major version deliberately. Three of its advisories have
+no fix below 6.0.0, and leaving known CVEs in the CORS layer of a production
+dependency is not a trade worth making to avoid a major bump. The call site
+uses only `origins`, `allow_headers`, `methods` and `max_age`, which are
+unchanged in 6.x; allowed and disallowed origins were both re-checked against
+a running server after the upgrade.
 
 ## Accepted limitations
 
