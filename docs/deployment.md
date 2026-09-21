@@ -29,6 +29,12 @@ empty value.
 | `WORKER_POLL_SECONDS` | no | Poll interval when the queue is empty |
 | `WORKER_BATCH_SIZE` | no | Jobs leased per pass; each is a paid call |
 
+> **Executing the migration?** Use
+> [production-rollout.md](production-rollout.md) — the operator runbook, with
+> per-step success criteria, smoke tests, monitoring and a rollback decision
+> table. This document explains *why* the order is what it is; that one tells
+> you what to type. Rehearse first: `npm run rehearse:migration`.
+
 ## The safe sequence
 
 Run `npm run verify` and both Playwright projects first. Do not start if

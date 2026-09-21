@@ -76,6 +76,8 @@ Full detail in [docs/architecture.md](docs/architecture.md).
 | [Security](docs/security.md) | Threat model, controls, accepted limitations |
 | [Testing](docs/testing.md) | The test layers and the adversarial ones |
 | [Deployment](docs/deployment.md) | Safe release order, migrations, rollback |
+| [Production rollout](docs/production-rollout.md) | The operator runbook for the like migration |
+| [Transition cleanup](docs/transition-cleanup.md) | Deleting the temporary compatibility path |
 
 ---
 

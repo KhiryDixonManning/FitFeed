@@ -242,4 +242,17 @@ These are known and deliberate, not oversights:
   signal**, which is the highest-volume write path. It is worth it — without
   it a user can mint unlimited documents in their own subtree — but it is a
   real cost, not free.
+- **Deleting a post leaves its like documents behind.** Firestore does not
+  cascade-delete subcollections, and the rules only let a user delete their
+  own like, so an author cannot clean up other people's. The orphans are
+  unreachable from the UI and cannot corrupt a count, but they accumulate and
+  consume the taste-rebuild budget. `reconcile_likes.py` sweeps them with the
+  Admin SDK; it is a maintenance job, not a request-path guarantee.
+- **`likesCount` can drift downward.** The rules stop a counter being
+  inflated, but permit deleting a like document *without* decrementing. No
+  app path does this; a console user could. `reconcile_likes.py` recounts and
+  realigns.
+- **No account-deletion flow.** If one is added it must also remove
+  `posts/*/likes/{uid}`, `users/{uid}/**`, `saves/{uid}_*`, `follows/{uid}_*`
+  and `userTasteState/{uid}`. Tracked in docs/transition-cleanup.md.
 - **No abuse reporting or moderation** for image content.

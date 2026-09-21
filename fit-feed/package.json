@@ -13,7 +13,7 @@
     "preview": "vite preview",
     "test": "playwright test",
     "test:ui": "playwright test --ui",
-    "deploy": "npm run build && firebase deploy",
+    "deploy": "node scripts/deploy-rules.mjs",
     "test:e2e": "playwright test",
     "test:rules": "firebase emulators:exec --only firestore,storage --project fitfeed-rules-test \"vitest run --reporter=default --reporter=json --outputFile=vitest-report.json\"",
     "test:backend": "firebase emulators:exec --only firestore --project fitfeed-rules-test \"cd python-backend && python -m pytest -q\"",
@@ -25,7 +25,8 @@
     "rules:build": "node scripts/build-transition-rules.mjs",
     "rules:check": "node scripts/build-transition-rules.mjs --check",
     "deploy:rules:strict": "node scripts/deploy-rules.mjs strict",
-    "deploy:rules:transition": "node scripts/deploy-rules.mjs transition"
+    "deploy:rules:transition": "node scripts/deploy-rules.mjs transition",
+    "rehearse:migration": "firebase emulators:exec --only firestore --project fitfeed-rules-test \"node scripts/rehearse-migration.mjs\""
   },
   "dependencies": {
     "firebase": "^12.11.0",

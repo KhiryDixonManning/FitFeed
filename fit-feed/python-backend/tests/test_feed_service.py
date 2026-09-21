@@ -78,7 +78,10 @@ class TestSerialization:
         assert out["likesCount"] == 5000
 
     def test_computes_liked_by_me(self):
-        assert serialize_post("p1", {"likedBy": [VIEWER]}, VIEWER)["likedByMe"] is True
+        # The legacy array is never a source of truth: attach_liked_by_me
+        # resolves like state from the subcollection. Seeding from the array
+        # would make an unlike un-observable, because no client can clean it.
+        assert serialize_post("p1", {"likedBy": [VIEWER]}, VIEWER)["likedByMe"] is False
         assert serialize_post("p1", {"likedBy": ["someone"]}, VIEWER)["likedByMe"] is False
         assert serialize_post("p1", {}, VIEWER)["likedByMe"] is False
 

@@ -102,11 +102,20 @@ def serialize_post(doc_id: str, data: dict, viewer_uid: str) -> dict:
     created = _to_utc(data.get("createdAt"))
     out["createdAt"] = created.isoformat() if created else None
 
-    # Legacy fallback only: posts migrated to the likes subcollection have
-    # likedByMe filled in by attach_liked_by_me. Unmigrated rows still carry
-    # the old array, so the UI stays correct during the migration window.
-    liked_by = data.get("likedBy")
-    out["likedByMe"] = bool(isinstance(liked_by, list) and viewer_uid in liked_by)
+    # likedByMe is resolved from the likes subcollection by
+    # attach_liked_by_me, never from the legacy likedBy array.
+    #
+    # Seeding it from the array looks like a helpful migration fallback and is
+    # actually a permanent bug: no client can write likedBy under the strict
+    # rules, so the array is never cleaned. A user who liked a post before the
+    # migration and unlikes it afterwards would delete their like document,
+    # decrement the counter - and still be shown as having liked it, forever.
+    #
+    # The subcollection is authoritative instead, which the deploy order
+    # guarantees is complete: migrate_likes.py --apply runs to a clean --verify
+    # before this backend ships, and again at the end of the compatibility
+    # window to pick up anything an old client wrote during it.
+    out["likedByMe"] = False
     out["likesCount"] = _safe_int(data.get("likesCount"))
     out["commentsCount"] = _safe_int(data.get("commentsCount"))
     return out
@@ -323,9 +332,12 @@ def attach_liked_by_me(db, posts: list[dict], viewer_uid: str) -> list[dict]:
     """Fill in likedByMe from posts/{id}/likes/{uid}.
 
     One batched multi-get for the whole page: page-size document reads in a
-    single round trip, rather than a query per post. The legacy likedBy array
-    is still honoured for posts that have not been migrated yet, so this is
-    correct before, during and after the migration.
+    single round trip, rather than a query per post.
+
+    This is the ONLY source of truth for whether the viewer liked a post. The
+    legacy likedBy array is deliberately not consulted - see serialize_post
+    for why a fallback there would be permanently wrong rather than helpfully
+    transitional.
     """
     if not posts or not viewer_uid:
         return posts

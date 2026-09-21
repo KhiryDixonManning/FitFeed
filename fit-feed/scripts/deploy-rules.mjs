@@ -50,10 +50,20 @@ const mode = process.argv[2];
 const spec = MODES[mode];
 
 if (!spec) {
-  console.error('Usage: node scripts/deploy-rules.mjs <strict|transition>');
+  console.error('Nothing was deployed: this command requires an explicit mode.');
   console.error('');
-  console.error('  strict      firestore.rules - the production policy');
-  console.error('  transition  firestore.transition.rules - migration window only');
+  console.error('  npm run deploy:rules:transition   firestore.transition.rules');
+  console.error('                                    migration window ONLY - permits the');
+  console.error('                                    legacy likedBy write');
+  console.error('  npm run deploy:rules:strict       firestore.rules');
+  console.error('                                    the production policy');
+  console.error('');
+  console.error('Rules are only one step. Indexes, the Railway services and hosting');
+  console.error('deploy separately and IN ORDER, and the like migration runs before any');
+  console.error('of them. Deploying them together will break likes for live clients.');
+  console.error('');
+  console.error('Read docs/production-rollout.md before deploying anything.');
+  console.error('Rehearse locally first: npm run rehearse:migration');
   process.exit(2);
 }
 
