@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { getPostsByAuthor, getPostsByIds, toggleLike, getUserPreferences, deletePost, getFollowerCount, getFollowingCount, getSavedPostIds, unsavePost } from '../FirebaseDB';
 import type { Post } from '../FirebaseDB';
 import { recordInteraction } from '../feedService';
 import { lazy, Suspense } from 'react';
-import { auth, db } from '../../firebase';
+import { auth } from '../../firebase';
 // Lazy so recharts (radar chart) stays out of the main bundle — the chunk
 // loads in parallel with the profile's Firestore reads.
 const StyleProfile = lazy(() => import('../components/StyleProfile'));
@@ -14,6 +13,9 @@ import EmptyState from '../components/EmptyState';
 import { ProfileHeaderSkeleton, GridTileSkeleton } from '../components/Skeletons';
 import { useNavigate } from 'react-router-dom';
 import { seedAllPosts, removeAllDemoComments } from '../utils/demoComments';
+import { compressToJpegFile, isAcceptedImage } from '../utils/image';
+import { getPublicProfile, updateOwnPublicProfile, upsertOwnProfile } from '../profileService';
+import { getLikedPostIds } from '../interactionService';
 
 interface ProfileProps {
   uid: string;
@@ -23,6 +25,9 @@ export default function Profile({ uid }: ProfileProps) {
   const navigate = useNavigate();
   const [posts, setPosts] = useState<Post[]>([]);
   const [savedPosts, setSavedPosts] = useState<Post[]>([]);
+  // Likes live at posts/{id}/likes/{uid}, so whether *this* viewer liked a
+  // post is read alongside the posts rather than inferred from the document.
+  const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
   const [tab, setTab] = useState<'mine' | 'saved'>('mine');
   const [userPreferences, setUserPreferences] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
@@ -58,24 +63,19 @@ export default function Profile({ uid }: ProfileProps) {
         setUserPreferences(prefs);
         setFollowerCount(fCount);
         setFollowingCount(fgCount);
-        setSavedPosts(await getPostsByIds(savedIds));
+        const saved = await getPostsByIds(savedIds);
+        setSavedPosts(saved);
+        setLikedIds(await getLikedPostIds(uid, [...myPosts, ...saved].map(p => p.id)));
 
-        // Load username and avatar from users collection
+        // Own public profile supplies the handle and avatar; the email shown
+        // below comes from the authenticated session, not a Firestore read.
         if (auth.currentUser) {
-          const userDoc = await getDoc(doc(db, 'users', auth.currentUser.uid));
-          if (userDoc.exists()) {
-            const data = userDoc.data();
-            setUsername(data.username || '');
-            setPhotoURL(data.photoURL || '');
-          }
+          const profile = await getPublicProfile(auth.currentUser.uid);
+          setUsername(profile?.username || '');
+          setPhotoURL(profile?.photoURL || '');
 
-          // Backfill user doc for older accounts
-          setDoc(doc(db, 'users', auth.currentUser.uid), {
-            uid: auth.currentUser.uid,
-            email: auth.currentUser.email,
-            displayName: auth.currentUser.displayName || '',
-            createdAt: new Date().toISOString(),
-          }, { merge: true }).catch(console.error);
+          // Backfill both documents for accounts created before the split.
+          upsertOwnProfile(auth.currentUser).catch(console.error);
         }
       } catch (err) {
         console.error('[Profile] Failed to load:', err);
@@ -90,7 +90,7 @@ export default function Profile({ uid }: ProfileProps) {
   const saveUsername = async () => {
     if (!usernameInput.trim()) return;
     const cleaned = usernameInput.trim().toLowerCase().replace(/\s+/g, '_');
-    await setDoc(doc(db, 'users', uid), { username: cleaned }, { merge: true });
+    await updateOwnPublicProfile(uid, { username: cleaned });
     setUsername(cleaned);
     setEditingUsername(false);
   };
@@ -98,13 +98,19 @@ export default function Profile({ uid }: ProfileProps) {
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (!isAcceptedImage(file)) {
+      console.error('Avatar upload rejected: unsupported file type');
+      return;
+    }
     setAvatarUploading(true);
     try {
       const storage = getStorage();
-      const storageRef = ref(storage, `avatars/${uid}/${Date.now()}_${file.name}`);
-      await uploadBytes(storageRef, file);
+      // Compress first: raw phone photos can exceed the 10 MB Storage limit.
+      const compressed = await compressToJpegFile(file, 512, 0.85);
+      const storageRef = ref(storage, `avatars/${uid}/${Date.now()}_${compressed.name}`);
+      await uploadBytes(storageRef, compressed);
       const url = await getDownloadURL(storageRef);
-      await setDoc(doc(db, 'users', uid), { photoURL: url }, { merge: true });
+      await updateOwnPublicProfile(uid, { photoURL: url });
       setPhotoURL(url);
     } catch (err) {
       console.error('Avatar upload failed:', err);
@@ -114,19 +120,18 @@ export default function Profile({ uid }: ProfileProps) {
   };
 
   const handleLike = async (post: Post) => {
-    const wasLiked = post.likedBy?.includes(uid);
+    const wasLiked = likedIds.has(post.id);
 
     setPosts(prev => prev.map(p =>
       p.id === post.id
-        ? {
-            ...p,
-            likesCount: wasLiked ? (p.likesCount || 1) - 1 : (p.likesCount || 0) + 1,
-            likedBy: wasLiked
-              ? p.likedBy?.filter(id => id !== uid)
-              : [...(p.likedBy || []), uid],
-          }
+        ? { ...p, likesCount: wasLiked ? (p.likesCount || 1) - 1 : (p.likesCount || 0) + 1 }
         : p
     ));
+    setLikedIds(prev => {
+      const next = new Set(prev);
+      if (wasLiked) next.delete(post.id); else next.add(post.id);
+      return next;
+    });
 
     const didLike = await toggleLike(post.id, uid);
     if (didLike && post.category) {
@@ -335,7 +340,7 @@ export default function Profile({ uid }: ProfileProps) {
                       onClick={(e) => { e.stopPropagation(); handleLike(post); }}
                       className="mt-2 flex items-center gap-1 text-sm text-[var(--text)] hover:text-[var(--accent)] transition"
                     >
-                      {post.likedBy?.includes(uid) ? '❤️' : '🤍'} {post.likesCount || 0}
+                      {likedIds.has(post.id) ? '❤️' : '🤍'} {post.likesCount || 0}
                     </button>
                   </div>
                 </div>

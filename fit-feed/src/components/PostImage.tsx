@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 interface PostImageProps {
   src?: string;
@@ -10,10 +10,10 @@ interface PostImageProps {
 // fails (deleted object, storage outage, malformed URL), show a styled
 // placeholder instead of the browser's broken-image icon.
 export default function PostImage({ src, alt, className = '' }: PostImageProps) {
-  const [failed, setFailed] = useState(false);
-
-  // A new src deserves a fresh attempt (e.g. list re-renders reuse the component)
-  useEffect(() => { setFailed(false); }, [src]);
+  // Track which src failed rather than a bare boolean: a new src is then
+  // automatically a fresh attempt, with no effect resetting state on render.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const failed = src !== undefined && failedSrc === src;
 
   if (!src || failed) {
     return (
@@ -50,7 +50,7 @@ export default function PostImage({ src, alt, className = '' }: PostImageProps) 
       className={className}
       loading="lazy"
       decoding="async"
-      onError={() => setFailed(true)}
+      onError={() => setFailedSrc(src)}
     />
   );
 }

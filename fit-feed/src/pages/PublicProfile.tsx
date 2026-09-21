@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getPostsByAuthor, toggleLike, getUserPreferences, type Post, followUser, unfollowUser, isFollowing, getFollowerCount, getFollowingCount } from '../FirebaseDB';
 import { recordInteraction } from '../feedService';
-import { auth, db } from '../../firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { auth } from '../../firebase';
 import { formatAuthor } from '../utils/formatAuthor';
+import { getPublicProfile, displayHandle } from '../profileService';
+import { getLikedPostIds } from '../interactionService';
 import PostImage from '../components/PostImage';
 import EmptyState from '../components/EmptyState';
 import { ProfileHeaderSkeleton, GridTileSkeleton } from '../components/Skeletons';
@@ -13,7 +14,10 @@ export default function PublicProfile() {
   const { uid } = useParams<{ uid: string }>();
   const navigate = useNavigate();
   const [posts, setPosts] = useState<Post[]>([]);
-  const [email, setEmail] = useState('');
+  // Whether the viewer liked each post is their own like document, not a
+  // field on the post - see interactionService.getLikedPostIds.
+  const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
+  const [handle, setHandle] = useState('');
   const [username, setUsername] = useState('');
   const [authorPhotoURL, setAuthorPhotoURL] = useState('');
   const [topCategory, setTopCategory] = useState('');
@@ -31,15 +35,13 @@ export default function PublicProfile() {
       // Any single failed read must never leave the page stuck on the spinner
       try {
         try {
-          const userDoc = await getDoc(doc(db, 'users', uid));
-          if (userDoc.exists()) {
-            const data = userDoc.data();
-            setEmail(data.email || '');
-            setUsername(data.username || '');
-            setAuthorPhotoURL(data.photoURL || '');
-          }
+          // Public profile only: another user's email is not readable.
+          const profile = await getPublicProfile(uid);
+          setHandle(displayHandle(profile ?? undefined, uid));
+          setUsername(profile?.username ?? '');
+          setAuthorPhotoURL(profile?.photoURL ?? '');
         } catch {
-          // user doc may not exist for older accounts
+          setHandle(`user_${uid.slice(0, 6)}`);
         }
 
         const [authorPosts, prefs, isFollowingUser, followerCountResult, followingCountResult] = await Promise.all([
@@ -51,6 +53,9 @@ export default function PublicProfile() {
         ]);
 
         setPosts(authorPosts);
+        if (currentUid) {
+          setLikedIds(await getLikedPostIds(currentUid, authorPosts.map(p => p.id)));
+        }
 
         if (Object.keys(prefs).length > 0) {
           const top = Object.entries(prefs).sort((a, b) => b[1] - a[1])[0][0];
@@ -86,19 +91,18 @@ export default function PublicProfile() {
 
   const handleLike = async (post: Post) => {
     if (!currentUid) return;
-    const wasLiked = post.likedBy?.includes(currentUid);
+    const wasLiked = likedIds.has(post.id);
 
     setPosts(prev => prev.map(p =>
       p.id === post.id
-        ? {
-            ...p,
-            likesCount: wasLiked ? (p.likesCount || 1) - 1 : (p.likesCount || 0) + 1,
-            likedBy: wasLiked
-              ? p.likedBy?.filter(id => id !== currentUid)
-              : [...(p.likedBy || []), currentUid],
-          }
+        ? { ...p, likesCount: wasLiked ? (p.likesCount || 1) - 1 : (p.likesCount || 0) + 1 }
         : p
     ));
+    setLikedIds(prev => {
+      const next = new Set(prev);
+      if (wasLiked) next.delete(post.id); else next.add(post.id);
+      return next;
+    });
 
     const didLike = await toggleLike(post.id, currentUid);
     if (didLike && post.category) {
@@ -130,7 +134,7 @@ export default function PublicProfile() {
           </div>
           <div>
             <h2 className="text-lg font-bold text-[var(--text-h)]">
-              {formatAuthor(email || `user_${uid!.slice(0, 6)}`, username)}
+              {formatAuthor(handle || `user_${uid!.slice(0, 6)}`, username)}
             </h2>
             <div className="flex gap-4 mt-1">
               <span className="text-xs text-[var(--text)]">
@@ -191,7 +195,7 @@ export default function PublicProfile() {
                   onClick={(e) => { e.stopPropagation(); handleLike(post); }}
                   className="mt-2 flex items-center gap-1 text-sm text-[var(--text)] hover:text-[var(--accent)] transition"
                 >
-                  {post.likedBy?.includes(currentUid) ? '❤️' : '🤍'} {post.likesCount || 0}
+                  {likedIds.has(post.id) ? '❤️' : '🤍'} {post.likesCount || 0}
                 </button>
               </div>
             </div>
