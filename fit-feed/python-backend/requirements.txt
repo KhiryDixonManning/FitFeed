@@ -1,11 +1,29 @@
+# Runtime dependencies for both Railway processes (web and worker).
+#
+# Direct dependencies are pinned exactly. Transitive ones are not locked with
+# hashes on purpose: the wheels resolved on Windows during development are not
+# the wheels Railway resolves on Linux, and a cross-platform hash lock would
+# fail the build rather than make it reproducible. Exact pins on what we
+# actually import give reproducible behaviour without that breakage.
+#
+# Python 3.12 or newer (see .python-version). Nothing here uses syntax newer
+# than 3.10; 3.12 is the tested and deployed floor.
+
+# --- web framework -----------------------------------------------------------
 Flask==3.0.0
-flask-cors==4.0.0
 Werkzeug==3.0.1
-anthropic
-python-dotenv
-Pillow
-scikit-learn
-numpy
-requests
-firebase-admin
-gunicorn
+flask-cors==4.0.0
+gunicorn==26.2.0
+
+# --- Firebase / Firestore ----------------------------------------------------
+firebase-admin==7.6.0
+
+# --- outfit analysis ---------------------------------------------------------
+anthropic==1.7.0
+Pillow==12.3.0
+scikit-learn==1.9.1        # KMeans, for palette extraction
+numpy==2.5.3               # required by scikit-learn; also used directly
+
+# --- misc --------------------------------------------------------------------
+requests==2.34.2           # trusted-host image fetch
+python-dotenv==1.2.3
