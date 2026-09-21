@@ -1,47 +1,416 @@
 rules_version = '2';
+
+// FitFeed Firestore security rules.
+//
+// Threat model: every client is untrusted. Anything a client could lie about
+// (identity, AI analysis results, engagement counters) is either derived from
+// the auth token, validated here, or restricted to the backend. The Python
+// service writes with the Firebase Admin SDK, which bypasses these rules, so
+// "server-controlled" below means "no client rule permits it".
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // ---------------------------------------------------------------- helpers
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function uid() {
+      return request.auth.uid;
+    }
+
+    // Document contents after the write (transforms like increment() and
+    // arrayUnion() are already applied here).
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function changedKeys() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    function isBoundedString(value, maxLen) {
+      return value is string && value.size() <= maxLen;
+    }
+
+    function isNonEmptyString(value, maxLen) {
+      return value is string && value.size() > 0 && value.size() <= maxLen;
+    }
+
+    function categories() {
+      return [
+        'streetwear', 'alternative', 'preppy', 'western', 'vintage',
+        'minimalist', 'y2k', 'business casual', 'athleisure', 'cottagecore'
+      ];
+    }
+
+    // Post images must be a Firebase Storage object under the author's own
+    // uid prefix - matching where storage.rules lets them write. This stops a
+    // user from publishing someone else's uploaded photo as their own post.
+    function isOwnStorageUrl(value) {
+      return value is string
+          && value.size() <= 2000
+          && value.matches(
+               'https://firebasestorage[.]googleapis[.]com/v0/b/[^/]+/o/posts%2F'
+               + uid() + '%2F.*');
+    }
+
+    // ------------------------------------------------------------------ posts
+    //
+    // AI analysis fields (palette, aesthetic, outfitName, aestheticTags,
+    // detectedItems, styleDescription, styleNotes, aestheticScores, analyzed,
+    // analysisStatus) are server-controlled: no client update rule below
+    // permits writing them. Only the Admin SDK can, after it has verified the
+    // caller and re-run the analysis itself.
+
+    function validPostCreate() {
+      return incoming().keys().hasOnly([
+               'authorId', 'content', 'imageUrl', 'category', 'outfitBreakdown',
+               'likesCount', 'commentsCount', 'likedBy', 'createdAt', 'analysisStatus'
+             ])
+          // likedBy is legacy: still accepted as an empty array on create for
+          // compatibility, never writable afterwards.
+          && incoming().keys().hasAll(['authorId', 'imageUrl', 'createdAt'])
+          && incoming().authorId == uid()
+          && isOwnStorageUrl(incoming().imageUrl)
+          && incoming().createdAt is timestamp
+          && incoming().likesCount == 0
+          && incoming().commentsCount == 0
+          && incoming().likedBy == []
+          && (!('content' in incoming()) || isBoundedString(incoming().content, 2000))
+          && (!('outfitBreakdown' in incoming()) || isBoundedString(incoming().outfitBreakdown, 2000))
+          && (!('category' in incoming()) || incoming().category in categories())
+          // A freshly created post may only declare analysis as not-yet-run.
+          && (!('analysisStatus' in incoming()) || incoming().analysisStatus == 'pending');
+    }
+
+    // The author may edit the copy they wrote - never authorId, counters or AI output.
+    function isAuthorContentEdit() {
+      return existing().authorId == uid()
+          && changedKeys().hasOnly(['content', 'category', 'outfitBreakdown', 'updatedAt'])
+          && (!('content' in incoming()) || isBoundedString(incoming().content, 2000))
+          && (!('outfitBreakdown' in incoming()) || isBoundedString(incoming().outfitBreakdown, 2000))
+          && (!('category' in incoming()) || incoming().category in categories());
+    }
+
+    function likesBefore() { return existing().get('likesCount', 0); }
+
+    // Phase 8: likes live in posts/{postId}/likes/{uid} rather than an
+    // unbounded array on the post. The document path is fully determined by
+    // the caller's uid, so - unlike comments - no id needs to be carried in
+    // the payload: the rules can address the caller's own like directly.
+    function ownLikePath(postId) {
+      return /databases/$(database)/documents/posts/$(postId)/likes/$(uid());
+    }
+
+    // Created by THIS request: absent before, present after.
+    function ownLikeAddedHere(postId) {
+      return !exists(ownLikePath(postId)) && existsAfter(ownLikePath(postId));
+    }
+
+    // Removed by THIS request: present before, absent after.
+    function ownLikeRemovedHere(postId) {
+      return exists(ownLikePath(postId)) && !existsAfter(ownLikePath(postId));
+    }
+
+    // The counter may only step by one, and only in lockstep with the
+    // caller's own like document changing in the same atomic write.
+    function isOwnLikeToggle(postId) {
+      return changedKeys().hasOnly(['likesCount'])
+          && incoming().likesCount is number
+          && incoming().likesCount >= 0
+          && ((incoming().likesCount == likesBefore() + 1 && ownLikeAddedHere(postId))
+           || (incoming().likesCount == likesBefore() - 1 && ownLikeRemovedHere(postId)));
+    }
+
+    // commentsCount may only move as part of an atomic batch that also
+    // creates or deletes the comment it is accounting for. The batch names
+    // that comment in lastCommentId, and the rules verify against the
+    // post-commit state (getAfter/existsAfter) that the document really was
+    // created or removed by this same request. A bare counter write, or one
+    // citing a comment that already existed, is refused.
+
+    function citedCommentPath() {
+      return /databases/$(database)/documents/comments/$(incoming().lastCommentId);
+    }
+
+    function citesAComment() {
+      return incoming().lastCommentId is string
+          && incoming().lastCommentId.size() > 0
+          && incoming().lastCommentId.size() <= 200;
+    }
+
+    // Created by THIS request: absent before, present after, on this post,
+    // written by the caller.
+    function commentCreatedHere(postId) {
+      return !exists(citedCommentPath())
+          && existsAfter(citedCommentPath())
+          && getAfter(citedCommentPath()).data.postId == postId
+          && getAfter(citedCommentPath()).data.authorId == uid();
+    }
+
+    // Deleted by THIS request: present before (on this post), absent after.
+    // Authorisation for the deletion itself is enforced by the comments rules,
+    // and a refused delete fails the whole batch.
+    function commentDeletedHere(postId) {
+      return exists(citedCommentPath())
+          && get(citedCommentPath()).data.postId == postId
+          && !existsAfter(citedCommentPath());
+    }
+
+    function isCommentCountStep(postId) {
+      return changedKeys().hasOnly(['commentsCount', 'lastCommentId'])
+          && citesAComment()
+          && incoming().commentsCount is number
+          && incoming().commentsCount >= 0
+          && ((incoming().commentsCount == existing().get('commentsCount', 0) + 1
+               && commentCreatedHere(postId))
+           || (incoming().commentsCount == existing().get('commentsCount', 0) - 1
+               && commentDeletedHere(postId)));
+    }
+
     match /posts/{postId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null;
-      allow update: if request.auth != null;
-      allow delete: if request.auth != null && request.auth.uid == resource.data.authorId;
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && validPostCreate();
+      allow update: if isSignedIn()
+        && (isAuthorContentEdit() || isOwnLikeToggle(postId) || isCommentCountStep(postId));
+      allow delete: if isSignedIn() && existing().authorId == uid();
+    }
+
+    // --------------------------------------------------------------- comments
+
+    function isPostAuthor(postId) {
+      return exists(/databases/$(database)/documents/posts/$(postId))
+          && get(/databases/$(database)/documents/posts/$(postId)).data.authorId == uid();
     }
 
     match /comments/{commentId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null;
-      allow delete: if request.auth != null && request.auth.uid == resource.data.authorId;
+      allow read: if isSignedIn();
+
+      // Author identity is bound to the verified token, not to whatever the
+      // client typed: both authorId and the displayed authorEmail must match.
+      allow create: if isSignedIn()
+        && incoming().keys().hasOnly(['postId', 'authorId', 'authorEmail', 'content', 'createdAt', 'isDemo'])
+        && incoming().keys().hasAll(['postId', 'authorId', 'content', 'createdAt'])
+        && incoming().authorId == uid()
+        && isNonEmptyString(incoming().postId, 200)
+        && isNonEmptyString(incoming().content, 1000)
+        && incoming().createdAt is string
+        && (!('authorEmail' in incoming()) || incoming().authorEmail == request.auth.token.email)
+        && (!('isDemo' in incoming()) || incoming().isDemo is bool);
+
+      allow update: if false;
+
+      // Your own comment, or any comment on a post you own (moderation, and
+      // required so deleting a post can clean up its comment thread).
+      allow delete: if isSignedIn()
+        && (existing().authorId == uid() || isPostAuthor(existing().postId));
     }
 
-    match /userPreferences/{uid} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+    // -------------------------------------------------------- userPreferences
+    // Private taste profile. Owner-only; also written by the backend.
+
+    match /userPreferences/{userId} {
+      allow read: if isSignedIn() && userId == uid();
+      allow create, update: if isSignedIn() && userId == uid()
+        && incoming().keys().size() <= 50;
+      allow delete: if isSignedIn() && userId == uid();
     }
 
-    match /users/{uid} {
-      // Any logged-in user can read profiles (needed for author names, avatars, public profiles)
-      allow read: if request.auth != null;
-      // Only the owner can write their own profile
-      allow write: if request.auth != null && request.auth.uid == uid;
+    // ------------------------------------------------------------------ users
+    // PRIVATE account data (email). Readable and writable only by the owner,
+    // so one signed-in user can no longer enumerate everyone else's email
+    // address. Anything shown to other people lives in publicProfiles.
+    //
+    // Note the update rule checks changedKeys() rather than the full key set:
+    // legacy documents still carry username/photoURL from before the split,
+    // and a merge write must not be rejected just because those remain.
+
+    function privateAccountFieldsValid() {
+      return (!('uid' in incoming()) || incoming().uid == uid())
+          && (!('email' in incoming()) || incoming().email == request.auth.token.email)
+          && (!('displayName' in incoming()) || isBoundedString(incoming().displayName, 100));
     }
+
+    match /users/{userId} {
+      allow read: if isSignedIn() && userId == uid();
+      allow create: if isSignedIn() && userId == uid()
+        && incoming().keys().hasOnly(['uid', 'email', 'displayName', 'createdAt'])
+        && privateAccountFieldsValid();
+      allow update: if isSignedIn() && userId == uid()
+        && changedKeys().hasOnly(['uid', 'email', 'displayName', 'createdAt'])
+        && privateAccountFieldsValid();
+      allow delete: if false;
+    }
+
+    // --------------------------------------------------------- publicProfiles
+    // The only user-facing identity other people can read: handle, avatar.
+    // The key whitelist is what keeps sensitive fields out of this collection
+    // structurally - an email cannot be stored here even by its owner.
+
+    function publicProfileFieldsValid() {
+      return (!('uid' in incoming()) || incoming().uid == uid())
+          && (!('photoURL' in incoming()) || isBoundedString(incoming().photoURL, 2000))
+          && (!('username' in incoming()) || (
+                incoming().username is string
+                && incoming().username.size() >= 2
+                && incoming().username.size() <= 30
+                && incoming().username.matches('^[a-z0-9_.]+$')
+             ))
+          // Bounded, and may not contain '@' so an email address cannot be
+          // mirrored into the public document through this field.
+          && (!('displayName' in incoming()) || (
+                isBoundedString(incoming().displayName, 60)
+                && !incoming().displayName.matches('.*@.*')
+             ));
+    }
+
+    match /publicProfiles/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && userId == uid()
+        && incoming().keys().hasOnly(['uid', 'username', 'displayName', 'photoURL', 'createdAt'])
+        && publicProfileFieldsValid();
+      allow update: if isSignedIn() && userId == uid()
+        && changedKeys().hasOnly(['uid', 'username', 'displayName', 'photoURL', 'createdAt'])
+        && publicProfileFieldsValid();
+      allow delete: if false;
+    }
+
+    // -------------------------------------------------------- userTasteVectors
+    // Derived personalisation state. Owner may read their own profile (so the
+    // UI could explain it); only the backend writes it, via the Admin SDK.
+
+    match /userTasteVectors/{userId} {
+      allow read: if isSignedIn() && userId == uid();
+      allow write: if false;
+    }
+
+
+    // ------------------------------------------------------------ post likes
+    // One document per (post, user). The id IS the uid, which makes "one like
+    // per user" a property of the schema rather than something to validate,
+    // and makes another user's like unaddressable by this caller.
+
+    match /posts/{postId}/likes/{likeUid} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && likeUid == uid()
+        && incoming().keys().hasOnly(['uid', 'createdAt'])
+        && incoming().uid == uid();
+      allow update: if false;
+      allow delete: if isSignedIn() && likeUid == uid();
+    }
+
+    // -------------------------------------------------------- interactions
+    // Private recommendation signals. Owner-only in both directions: nobody
+    // else can read what a user has viewed or hidden, and nobody can write
+    // signals on someone else's behalf.
+
+    function validInteraction(interactionId) {
+      return incoming().keys().hasOnly(['postId', 'type', 'createdAt', 'value', 'schemaVersion'])
+          && incoming().keys().hasAll(['postId', 'type', 'createdAt', 'schemaVersion'])
+          && isNonEmptyString(incoming().postId, 200)
+          && incoming().type in ['impression', 'view', 'more_like_this', 'not_interested']
+          && incoming().createdAt is string
+          && incoming().schemaVersion == 1
+          // Deterministic id keeps one document per (type, post): a post
+          // cannot contribute unlimited impressions however often it renders,
+          // and because the id is fixed by the path, neither postId nor type
+          // can be edited after creation without breaking this equality.
+          && interactionId == incoming().type + '_' + incoming().postId
+          && (!('value' in incoming()) || incoming().value in ['short', 'meaningful', 'long'])
+          // A signal must name a post that exists. Without this a user could
+          // mint unlimited documents in their own subtree by inventing ids;
+          // with it, storage is bounded by (types x real posts). Costs one
+          // document read per signal write.
+          && exists(/databases/$(database)/documents/posts/$(incoming().postId));
+    }
+
+    match /users/{userId}/interactions/{interactionId} {
+      allow read: if isSignedIn() && userId == uid();
+      allow create, update: if isSignedIn() && userId == uid()
+        && validInteraction(interactionId);
+      allow delete: if isSignedIn() && userId == uid();
+    }
+
+    // ------------------------------------------------------- userTasteState
+    // A monotonic marker the client bumps after a taste-relevant action, so
+    // the backend knows a cached taste vector is stale. Only ever forces a
+    // rebuild of the caller's own profile.
+
+    // The marker must only ever move FORWARD, and only by a small step. A
+    // client that could lower it would make a stale cached taste vector look
+    // fresh again; one that could jump it to a huge value would break the
+    // comparison for good. Every real call site is a single increment(1), so
+    // a small ceiling costs nothing and bounds both abuses.
+    function validGenerationStep() {
+      return incoming().keys().hasOnly(['generation', 'updatedAt'])
+          && incoming().generation is number
+          && incoming().generation is int
+          && incoming().generation > existing().generation
+          && incoming().generation <= existing().generation + 10;
+    }
+
+    match /userTasteState/{userId} {
+      allow read: if isSignedIn() && userId == uid();
+      allow create: if isSignedIn() && userId == uid()
+        && incoming().keys().hasOnly(['generation', 'updatedAt'])
+        && incoming().generation is number
+        && incoming().generation is int
+        && incoming().generation > 0
+        && incoming().generation <= 10;
+      allow update: if isSignedIn() && userId == uid()
+        && validGenerationStep();
+      // Deleting the marker would reset it to "never bumped", which is the
+      // same stale-cache win as moving it backward.
+      allow delete: if false;
+    }
+
+    // --------------------------------------------------------- analysisJobs
+    // Durable background work. Enqueued and processed only by the backend
+    // (Admin SDK); a client may read the status of a job for its own post.
+
+    match /analysisJobs/{jobId} {
+      allow read: if isSignedIn()
+        && exists(/databases/$(database)/documents/posts/$(jobId))
+        && get(/databases/$(database)/documents/posts/$(jobId)).data.authorId == uid();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------- follows
+    // Document id is "<followerId>_<followingId>" so the id itself cannot claim
+    // a different relationship than the payload.
 
     match /follows/{followId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null
-        && request.auth.uid == request.resource.data.followerId;
-      allow delete: if request.auth != null
-        && request.auth.uid == resource.data.followerId;
+      allow read: if isSignedIn();
+      allow create: if isSignedIn()
+        && incoming().keys().hasOnly(['followerId', 'followingId', 'createdAt'])
+        && incoming().keys().hasAll(['followerId', 'followingId'])
+        && incoming().followerId == uid()
+        && isNonEmptyString(incoming().followingId, 128)
+        && incoming().followingId != uid()
+        && followId == incoming().followerId + '_' + incoming().followingId;
+      allow update: if false;
+      allow delete: if isSignedIn() && existing().followerId == uid();
     }
+
+    // ------------------------------------------------------------------ saves
+    // Private bookmarks: only the owner may read or write them.
 
     match /saves/{saveId} {
-      // Saves are private — only the owner can see or manage their own
-      allow read: if request.auth != null && request.auth.uid == resource.data.uid;
-      allow create: if request.auth != null
-        && request.auth.uid == request.resource.data.uid;
-      allow delete: if request.auth != null
-        && request.auth.uid == resource.data.uid;
+      allow read: if isSignedIn() && existing().uid == uid();
+      allow create: if isSignedIn()
+        && incoming().keys().hasOnly(['uid', 'postId', 'createdAt'])
+        && incoming().keys().hasAll(['uid', 'postId'])
+        && incoming().uid == uid()
+        && isNonEmptyString(incoming().postId, 200)
+        && saveId == incoming().uid + '_' + incoming().postId;
+      allow update: if false;
+      allow delete: if isSignedIn() && existing().uid == uid();
     }
-
   }
 }

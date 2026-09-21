@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
+import { FirebaseError } from 'firebase/app';
 import { auth } from '../../firebase';
-import { db } from '../../firebase';
+import { upsertOwnProfile } from '../profileService';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -15,26 +15,15 @@ export default function Login() {
     setError('');
     setLoading(true);
     try {
-      if (isSignUp) {
-        const credential = await createUserWithEmailAndPassword(auth, email, password);
-        // Save user profile to Firestore so other pages can look up email by uid
-        await setDoc(doc(db, 'users', credential.user.uid), {
-          uid: credential.user.uid,
-          email: credential.user.email,
-          displayName: '',
-          createdAt: new Date().toISOString(),
-        });
-      } else {
-        const credential = await signInWithEmailAndPassword(auth, email, password);
-        // Upsert user doc — creates it for old accounts, leaves existing data intact
-        await setDoc(doc(db, 'users', credential.user.uid), {
-          uid: credential.user.uid,
-          email: credential.user.email,
-        }, { merge: true });
-      }
+      const credential = isSignUp
+        ? await createUserWithEmailAndPassword(auth, email, password)
+        : await signInWithEmailAndPassword(auth, email, password);
+      // Writes the private account doc and the public profile together,
+      // backfilling a public profile for accounts created before the split.
+      await upsertOwnProfile(credential.user);
       // No redirect needed — onAuthStateChanged in App.tsx handles it
-    } catch (err: any) {
-      setError(err.code || 'Authentication failed');
+    } catch (err: unknown) {
+      setError(err instanceof FirebaseError ? err.code : 'Authentication failed');
     } finally {
       setLoading(false);
     }

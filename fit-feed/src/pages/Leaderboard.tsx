@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../../firebase';
 import { getTrendingFeed } from '../feedService';
+import { getPublicProfiles, displayHandle } from '../profileService';
 import { type Post } from '../FirebaseDB';
 import { CATEGORIES } from '../constants/categories';
 import PostImage from '../components/PostImage';
@@ -12,7 +11,6 @@ import { LeaderboardRowSkeleton } from '../components/Skeletons';
 export default function Leaderboard() {
   const navigate = useNavigate();
   const [posts, setPosts] = useState<Post[]>([]);
-  const [filtered, setFiltered] = useState<Post[]>([]);
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [authorEmails, setAuthorEmails] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -21,45 +19,24 @@ export default function Leaderboard() {
     const load = async () => {
       const trending = await getTrendingFeed();
       setPosts(trending);
-      setFiltered(trending);
 
-      // Batch-fetch author display names (prefer username, fall back to email
-      // prefix). Dedupe authorIds before fanning out — the concurrent callbacks
-      // can't see each other's writes, so a per-post guard doesn't dedupe.
-      const emailMap: Record<string, string> = {};
+      // Public handles only, batched.
       const authorIds = [...new Set(trending.map(p => p.authorId).filter(Boolean))];
-      await Promise.all(
-        authorIds.map(async (authorId) => {
-          try {
-            const userDoc = await getDoc(doc(db, 'users', authorId));
-            if (userDoc.exists()) {
-              const data = userDoc.data();
-              emailMap[authorId] = data.username
-                ? data.username
-                : data.email
-                  ? data.email.split('@')[0]
-                  : `user_${authorId.slice(0, 6)}`;
-            } else {
-              emailMap[authorId] = `user_${authorId.slice(0, 6)}`;
-            }
-          } catch {
-            emailMap[authorId] = `user_${authorId.slice(0, 6)}`;
-          }
-        })
-      );
-      setAuthorEmails(emailMap);
+      const profiles = await getPublicProfiles(authorIds);
+      const handleMap: Record<string, string> = {};
+      for (const authorId of authorIds) {
+        handleMap[authorId] = displayHandle(profiles[authorId], authorId);
+      }
+      setAuthorEmails(handleMap);
       setLoading(false);
     };
     load();
   }, []);
 
-  useEffect(() => {
-    setFiltered(
-      selectedCategory === 'all'
-        ? posts
-        : posts.filter(p => p.category === selectedCategory)
-    );
-  }, [selectedCategory, posts]);
+  // Plain derived value: no second state to fall out of sync with posts.
+  const filtered = selectedCategory === 'all'
+    ? posts
+    : posts.filter(p => p.category === selectedCategory);
 
   if (loading) return (
     <div className="max-w-2xl mx-auto py-6 text-left pb-24 md:pb-6">

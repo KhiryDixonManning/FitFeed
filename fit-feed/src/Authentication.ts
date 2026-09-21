@@ -1,19 +1,13 @@
 import { auth } from "../firebase";
-import { db } from "../firebase";
 import { createUserWithEmailAndPassword, type UserCredential, signInWithEmailAndPassword, signOut } from "firebase/auth";
-import { doc, setDoc } from "firebase/firestore";
 import { FirebaseError } from "firebase/app";
+import { upsertOwnProfile } from "./profileService";
 
 export const signUp = async (email: string, password: string): Promise<UserCredential | null> => {
     try {
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        console.log("User created:", userCredential.user);
-        await setDoc(doc(db, 'users', userCredential.user.uid), {
-            uid: userCredential.user.uid,
-            email: userCredential.user.email,
-            displayName: '',
-            createdAt: new Date().toISOString(),
-        });
+        // Writes the private account doc and the public profile together.
+        await upsertOwnProfile(userCredential.user);
         return userCredential;
     } catch (error: unknown) {
         if (error instanceof FirebaseError) {
@@ -29,12 +23,8 @@ export const signUp = async (email: string, password: string): Promise<UserCrede
 export const login = async (email: string, password: string): Promise<UserCredential | null> => {
     try {
         const userCredential = await signInWithEmailAndPassword(auth, email, password);
-        console.log("Welcome:", userCredential.user);
-        // Upsert user doc — creates it for old accounts, leaves existing data intact
-        await setDoc(doc(db, 'users', userCredential.user.uid), {
-            uid: userCredential.user.uid,
-            email: userCredential.user.email,
-        }, { merge: true });
+        // Upserts both docs — backfills a public profile for older accounts.
+        await upsertOwnProfile(userCredential.user);
         return userCredential;
     } catch (error: unknown) {
         if (error instanceof FirebaseError) {

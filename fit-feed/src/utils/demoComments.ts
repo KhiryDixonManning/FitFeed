@@ -1,5 +1,14 @@
-import { collection, addDoc, getDocs, query, where, deleteDoc, doc, updateDoc, increment } from 'firebase/firestore';
-import { db } from '../../firebase';
+import { collection, getDocs, query, where, doc, increment, writeBatch } from 'firebase/firestore';
+import { db, auth } from '../../firebase';
+
+// Dev-only helper for populating comment threads on a local/demo database.
+//
+// This used to write comments under invented identities (demo_user_1, ...)
+// and bump commentsCount by N in a single write. Both are now correctly
+// refused by the security rules: comment authorship is bound to the verified
+// auth token, and the counter may only step by one. The seeder therefore
+// posts as the signed-in user, one atomic comment at a time — it exercises
+// exactly the same write path a real comment takes.
 
 const DEMO_COMMENTS = [
   "this fit is everything 🔥",
@@ -24,33 +33,40 @@ const DEMO_COMMENTS = [
   "giving main character energy fr",
 ];
 
-const DEMO_USERS = [
-  { email: 'alex@fitfeed.com', uid: 'demo_user_1' },
-  { email: 'jordan@fitfeed.com', uid: 'demo_user_2' },
-  { email: 'riley@fitfeed.com', uid: 'demo_user_3' },
-  { email: 'sam@fitfeed.com', uid: 'demo_user_4' },
-  { email: 'taylor@fitfeed.com', uid: 'demo_user_5' },
-  { email: 'morgan@fitfeed.com', uid: 'demo_user_6' },
-  { email: 'casey@fitfeed.com', uid: 'demo_user_7' },
-];
-
 export const seedDemoComments = async (postId: string, count: number = 5): Promise<void> => {
-  const shuffled = [...DEMO_COMMENTS].sort(() => Math.random() - 0.5).slice(0, count);
-  for (const text of shuffled) {
-    const user = DEMO_USERS[Math.floor(Math.random() * DEMO_USERS.length)];
-    await addDoc(collection(db, 'comments'), {
-      postId,
-      authorId: user.uid,
-      authorEmail: user.email,
-      content: text,
-      createdAt: new Date(Date.now() - Math.random() * 86400000 * 3).toISOString(),
-      isDemo: true,
-    });
+  const user = auth.currentUser;
+  if (!user) {
+    console.warn('[demoComments] Sign in first — comments are attributed to the current user.');
+    return;
   }
-  await updateDoc(doc(db, 'posts', postId), {
-    commentsCount: increment(count),
-  });
-  console.log(`[demoComments] Seeded ${count} comments for post ${postId}`);
+
+  const shuffled = [...DEMO_COMMENTS].sort(() => Math.random() - 0.5).slice(0, count);
+  let written = 0;
+
+  for (const text of shuffled) {
+    try {
+      const batch = writeBatch(db);
+      const commentRef = doc(collection(db, 'comments'));
+      batch.set(commentRef, {
+        postId,
+        authorId: user.uid,
+        authorEmail: user.email ?? '',
+        content: text,
+        createdAt: new Date(Date.now() - Math.random() * 86400000 * 3).toISOString(),
+        isDemo: true,
+      });
+      batch.update(doc(db, 'posts', postId), {
+        commentsCount: increment(1),
+        lastCommentId: commentRef.id,
+      });
+      await batch.commit();
+      written++;
+    } catch (error) {
+      console.error('[demoComments] Failed to seed a comment:', error);
+    }
+  }
+
+  console.log(`[demoComments] Seeded ${written} comments for post ${postId}`);
 };
 
 export const seedAllPosts = async (): Promise<void> => {
@@ -64,16 +80,25 @@ export const seedAllPosts = async (): Promise<void> => {
 export const removeAllDemoComments = async (): Promise<void> => {
   const q = query(collection(db, 'comments'), where('isDemo', '==', true));
   const snapshot = await getDocs(q);
-  const postCounts: Record<string, number> = {};
+  let removed = 0;
+
+  // Delete and decrement atomically, naming the comment so the rules can
+  // confirm the counter step matches a real deletion.
   for (const docSnap of snapshot.docs) {
     const data = docSnap.data();
-    postCounts[data.postId] = (postCounts[data.postId] || 0) + 1;
-    await deleteDoc(doc(db, 'comments', docSnap.id));
+    try {
+      const batch = writeBatch(db);
+      batch.delete(doc(db, 'comments', docSnap.id));
+      batch.update(doc(db, 'posts', data.postId), {
+        commentsCount: increment(-1),
+        lastCommentId: docSnap.id,
+      });
+      await batch.commit();
+      removed++;
+    } catch (error) {
+      console.error('[demoComments] Failed to remove a comment:', error);
+    }
   }
-  for (const [postId, count] of Object.entries(postCounts)) {
-    await updateDoc(doc(db, 'posts', postId), {
-      commentsCount: increment(-count),
-    });
-  }
-  console.log(`[demoComments] Removed ${snapshot.docs.length} demo comments`);
+
+  console.log(`[demoComments] Removed ${removed} demo comments`);
 };
