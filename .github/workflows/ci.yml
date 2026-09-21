@@ -266,6 +266,10 @@ jobs:
     if: always()
     steps:
       - name: Every required job succeeded
+        # This job checks out nothing, so it cannot inherit the repository-wide
+        # `working-directory: fit-feed` default - bash would try to start in a
+        # directory that does not exist on the runner.
+        working-directory: .
         run: |
           results='${{ join(needs.*.result, ' ') }}'
           echo "job results: $results"
