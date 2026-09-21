@@ -1,3 +1,35 @@
-.devcontainer
+# Repo-root ignores. The application lives in fit-feed/, which has its own
+# .gitignore; these cover anything that lands at the top level.
+
+# Dependencies. 177 files under node_modules/ were tracked here by mistake
+# before this was in place; they were removed from the index (not from disk).
+node_modules/
+**/node_modules/
+
+# Secrets and local configuration
 .env
+.env.*
+!.env.example
+**/serviceAccountKey.json
+*.pem
+
+# Editor / tooling
+.devcontainer
 .invisible.json
+.DS_Store
+.idea/
+.vscode/
+
+# Build and test output
+dist/
+build/
+coverage/
+test-results/
+playwright-report/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.pytest_cache/
