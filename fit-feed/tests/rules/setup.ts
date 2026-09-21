@@ -11,6 +11,11 @@ const here = dirname(fileURLToPath(import.meta.url));
 
 export const PROJECT_ID = 'fitfeed-rules-test';
 
+/** Reads a rules file from the project root. */
+export function readRules(name: string): string {
+  return readFileSync(resolve(here, '../..', name), 'utf8');
+}
+
 export const ALICE = 'alice_uid';
 export const ALICE_EMAIL = 'alice@example.com';
 export const BOB = 'bob_uid';
@@ -22,13 +27,32 @@ export async function makeTestEnv(): Promise<RulesTestEnvironment> {
     firestore: {
       host: '127.0.0.1',
       port: 8080,
-      rules: readFileSync(resolve(here, '../../firestore.rules'), 'utf8'),
+      rules: readRules('firestore.rules'),
     },
     storage: {
       host: '127.0.0.1',
       port: 9199,
-      rules: readFileSync(resolve(here, '../../storage.rules'), 'utf8'),
+      rules: readRules('storage.rules'),
     },
+  });
+}
+
+/**
+ * An environment running an arbitrary Firestore rules source, under its own
+ * project id.
+ *
+ * Rules are stored per project in the emulator, so a second rule set needs a
+ * second project or it would overwrite the first one's policy mid-run. Used
+ * for the transitional rules and for the deliberately weakened variants the
+ * mutation tests need.
+ */
+export async function makeRulesEnv(
+  projectId: string,
+  rules: string
+): Promise<RulesTestEnvironment> {
+  return initializeTestEnvironment({
+    projectId,
+    firestore: { host: '127.0.0.1', port: 8080, rules },
   });
 }
 

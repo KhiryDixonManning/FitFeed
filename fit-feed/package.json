@@ -18,10 +18,14 @@
     "test:rules": "firebase emulators:exec --only firestore,storage --project fitfeed-rules-test \"vitest run --reporter=default --reporter=json --outputFile=vitest-report.json\"",
     "test:backend": "firebase emulators:exec --only firestore --project fitfeed-rules-test \"cd python-backend && python -m pytest -q\"",
     "typecheck": "tsc -b",
-    "verify": "npm run typecheck && npm run lint && npm run build && npm run check:secrets && npm run test:rules && npm run check:skips && npm run test:backend && npm run test:evaluate",
+    "verify": "npm run typecheck && npm run lint && npm run build && npm run rules:check && npm run check:secrets && npm run test:rules && npm run check:skips && npm run test:backend && npm run test:evaluate",
     "test:evaluate": "cd python-backend && python evaluate_recommendations.py",
     "check:skips": "node scripts/assert-no-skips.mjs vitest-report.json --label vitest",
-    "check:secrets": "node scripts/check-hygiene.mjs"
+    "check:secrets": "node scripts/check-hygiene.mjs",
+    "rules:build": "node scripts/build-transition-rules.mjs",
+    "rules:check": "node scripts/build-transition-rules.mjs --check",
+    "deploy:rules:strict": "node scripts/deploy-rules.mjs strict",
+    "deploy:rules:transition": "node scripts/deploy-rules.mjs transition"
   },
   "dependencies": {
     "firebase": "^12.11.0",

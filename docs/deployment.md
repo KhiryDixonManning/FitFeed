@@ -1,11 +1,10 @@
 # Deployment
 
-> **The proposed 8-step order is nearly right, but it has one gap.** Steps
-> 1–4 are correct as written. Step 5 (rules) cannot be deployed against the
-> currently live client without breaking likes, because the old and new
-> clients need *mutually exclusive* rule sets. The corrected sequence below
-> splits the rules deploy in two. The analysis is in
-> [Compatibility](#compatibility-what-actually-breaks).
+> **The rules deploy happens twice, from two checked-in files.** The old and
+> new clients need *mutually exclusive* rule sets, so a single rules deploy
+> cannot serve both. Nobody edits a rules file to do this: the transitional
+> policy is a committed, generated artifact deployed by its own script. The
+> analysis is in [Compatibility](#compatibility-what-actually-breaks).
 
 ## Environment variables
 
@@ -82,21 +81,29 @@ with `FAILED_PRECONDITION`. The new backend depends on the collection-group
 `likes` index and both `analysisJobs` indexes, so deploying it early turns
 the feed and the worker into error loops.
 
-### 5. Deploy *transitional* rules
-
-This is the step the original ordering is missing. Publish a rules version
-that permits **both** the legacy array write and the new subcollection write,
-so old and new clients both work while browsers still hold old JavaScript.
-Take the current `firestore.rules` and, for the transition only, re-admit the
-legacy like update alongside the new one.
+### 5. Deploy the transitional rules
 
 ```bash
-firebase deploy --only firestore:rules
+cd fit-feed
+npm run deploy:rules:transition
 ```
 
-Everything else in the current rules — the interaction invariants, the
-monotonic taste marker, the analysis-job lockdown, the profile split — is
-safe to ship here, because no currently deployed client writes any of it.
+This publishes `firestore.transition.rules`, which permits **both** the
+legacy array write and the new subcollection write, so old and new clients
+both work while browsers still hold old JavaScript.
+
+There is nothing to edit. That file is generated from `firestore.rules` by
+`npm run rules:build` and committed, so it is the strict policy plus exactly
+one documented allowance and cannot drift — CI fails if the committed output
+no longer matches its generator. The deploy script re-checks that sync,
+verifies the file really is the transitional one, and prints what it is about
+to ship before calling Firebase. A wrong or hand-modified file is refused
+rather than deployed.
+
+Everything else — AI field protection, `authorId` immutability, the comment
+counter invariants, the interaction, profile, taste and analysis-job rules —
+is inherited unchanged. The only difference is described under
+[What the transitional rules allow](#what-the-transitional-rules-allow).
 
 ### 6. Deploy the Railway worker
 
@@ -115,14 +122,54 @@ cd fit-feed && npm run build && firebase deploy --only hosting
 ### 9. Tighten the rules
 
 Once old clients have drained — open tabs keep running old JavaScript until
-they reload, so allow a real window, not minutes — deploy the strict
-`firestore.rules` from this repository, which refuses `likedBy` writes
-entirely.
+they reload, so allow a real window, not minutes:
+
+```bash
+npm run deploy:rules:strict
+```
+
+This publishes `firestore.rules`, which refuses `likedBy` writes entirely.
+The script refuses to run if that file has somehow acquired the transitional
+allowance.
 
 ### 10. Later, and separately: drop `likedBy`
 
 Only after a clean `--verify` and a period with no client reading it. This is
 its own change with its own rollback, never bundled with a feature release.
+
+## What the transitional rules allow
+
+`firestore.transition.rules` is `firestore.rules` plus one extra disjunct on
+the `posts/{postId}` update rule, and nothing else:
+
+```
+allow update: if isSignedIn()
+  && (isAuthorContentEdit() || isOwnLikeToggle(postId) || isCommentCountStep(postId)
+      || isLegacyLikeToggle());          // <- the only addition
+```
+
+`isLegacyLikeToggle()` permits precisely the mutation the deployed client
+makes — `{ likesCount: increment(±1), likedBy: arrayUnion/arrayRemove(uid) }`
+— by requiring all of:
+
+| Requirement | Stops |
+| --- | --- |
+| Changed keys are exactly `likesCount` **and** `likedBy` | A caption, `authorId`, an AI field or a comment counter riding along; either field moving alone |
+| `likesCount` steps by exactly ±1, and stays ≥ 0 | Inflating a counter |
+| The array differs by exactly **the caller's own uid** | Adding or removing somebody else, replacing the array wholesale |
+| Nothing else is added or removed from the array | Silently dropping other likers |
+| Array size ≤ 5000 | An unbounded write |
+
+Everything the strict policy protects stays protected. `authorId` is still
+immutable, the AI fields still have no client update rule, and the
+interaction, taste-marker, public-profile and analysis-job rules are
+byte-identical to the strict file.
+
+`tests/rules/transition.rules.test.ts` proves both halves: the legacy like
+and unlike succeed, the new subcollection like and unlike succeed, and every
+adjacent write in the table above fails. Three of its cases are mutation
+tests — they weaken one clause of the allowance and assert the attack it
+guards then *succeeds*, which is what makes the passing tests meaningful.
 
 ## Compatibility: what actually breaks
 
@@ -177,7 +224,7 @@ curl -s -o /dev/null -w '%{http_code}\n' \
 | Frontend regression | Firebase Hosting keeps previous releases — roll back in the console; it is instant and needs no rebuild |
 | API regression | Redeploy the previous Railway deployment. The API is stateless |
 | Worker regression | Stop the worker service. Jobs stay queued and drain when it returns — nothing is lost, analysis is just delayed |
-| Rules regression | Redeploy the previous rules version. Keep the transitional version to hand: reverting to strict-minus-one is the quickest way to unbreak writes |
+| Rules regression | `npm run deploy:rules:transition` re-opens the legacy like path in one command; it is the quickest way to unbreak writes for clients that have not updated. Firebase also keeps previous rules versions in the console |
 | Migration concern | Nothing to roll back. The migration only *adds* like documents and reconciles counts; `likedBy` is untouched, so the old client's read path still works |
 
 The migration is the only irreversible-ish step, and it was designed not to

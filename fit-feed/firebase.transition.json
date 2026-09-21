@@ -1,0 +1,14 @@
+{
+  "_comment": [
+    "TEMPORARY deploy config for the like-migration window only.",
+    "It differs from firebase.json in exactly one field: firestore.rules points",
+    "at firestore.transition.rules instead of firestore.rules.",
+    "Deploy through 'npm run deploy:rules:transition', never by hand - that",
+    "script verifies the generated file is in sync and refuses to ship the",
+    "wrong policy. See docs/deployment.md."
+  ],
+  "firestore": {
+    "rules": "firestore.transition.rules",
+    "indexes": "firestore.indexes.json"
+  }
+}

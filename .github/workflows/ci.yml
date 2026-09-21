@@ -110,6 +110,12 @@ jobs:
 
       - run: npm ci
 
+      - name: Transitional rules are in sync with their generator
+        # firestore.transition.rules is generated from firestore.rules. If
+        # somebody edits either without regenerating, the file we would deploy
+        # during the migration window is not the file anybody reviewed.
+        run: npm run rules:check
+
       - name: Rules and component suites under the emulators
         run: |
           npx firebase emulators:exec \
