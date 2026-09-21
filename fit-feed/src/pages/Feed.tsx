@@ -1,71 +1,52 @@
-import { useState, useEffect, useRef } from "react";
-import { getFollowingIds, getSavedPostIds, savePost, unsavePost } from '../FirebaseDB';
-import { collection, onSnapshot, query, orderBy, doc, getDoc, type Firestore } from "firebase/firestore";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { collection, onSnapshot, query, orderBy, limit as fsLimit, where, Timestamp } from "firebase/firestore";
 import { db } from "../../firebase";
+import { useNavigate } from "react-router-dom";
 import PostCard from "../components/PostCard";
 import EmptyState from "../components/EmptyState";
 import { PostCardSkeleton } from "../components/Skeletons";
-import { useNavigate } from "react-router-dom";
 import { recordInteraction } from "../feedService";
-import { toggleLike, getUserPreferences, type Post } from "../FirebaseDB";
+import { toggleLike, getSavedPostIds, savePost, unsavePost, type Post } from "../FirebaseDB";
 import { CATEGORIES } from "../constants/categories";
-import { PYTHON_API } from '../config';
-
-const fetchAuthorEmails = async (posts: Post[], database: Firestore, existingEmails: Record<string, string> = {}): Promise<Record<string, string>> => {
-  const emailMap: Record<string, string> = {};
-  // Dedupe BEFORE fanning out: the map callbacks all start before any
-  // emailMap write lands, so checking emailMap inside them can't prevent
-  // duplicate reads — N posts by one author used to mean N user-doc reads.
-  const authorIds = [...new Set(posts.map(p => p.authorId))]
-    .filter(id => id && !existingEmails[id]);
-  await Promise.all(
-    authorIds.map(async (authorId) => {
-      try {
-        const userDoc = await getDoc(doc(database, 'users', authorId));
-        if (userDoc.exists()) {
-          const data = userDoc.data();
-          if (data.username) {
-            emailMap[authorId] = data.username;
-          } else if (data.email) {
-            emailMap[authorId] = data.email.split('@')[0];
-          } else {
-            emailMap[authorId] = `user_${authorId.slice(0, 6)}`;
-          }
-        } else {
-          emailMap[authorId] = `user_${authorId.slice(0, 6)}`;
-        }
-      } catch {
-        emailMap[authorId] = `user_${authorId.slice(0, 6)}`;
-      }
-    })
-  );
-  return emailMap;
-};
+import { PYTHON_API } from "../config";
+import { ApiError } from "../api";
+import { fetchFeedPage, type FeedMode } from "../feedApi";
+import { getPublicProfiles, displayHandle } from "../profileService";
 
 interface FeedProps {
   uid: string;
 }
 
+// How many unseen posts we are willing to count for the "new posts" pill.
+const NEW_POST_WATCH_LIMIT = 10;
+
 export default function Feed({ uid }: FeedProps) {
   const navigate = useNavigate();
+
   const [posts, setPosts] = useState<Post[]>([]);
+  const [handles, setHandles] = useState<Record<string, string>>({});
+  const [tab, setTab] = useState<FeedMode>('foryou');
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [pageError, setPageError] = useState<string | null>(null);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+
   const [apiOnline, setApiOnline] = useState(true);
+  const [newPostCount, setNewPostCount] = useState(0);
+
   const [likingIds, setLikingIds] = useState<Set<string>>(new Set());
-  const [authorEmails, setAuthorEmails] = useState<Record<string, string>>({});
-  const [tab, setTab] = useState<'foryou' | 'discover' | 'following'>('foryou');
-  const [followingIds, setFollowingIds] = useState<string[]>([]);
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
-  const isFirstLoadRef = useRef(true);
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const rankDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const authorEmailsRef = useRef<Record<string, string>>({});
 
-  // Keep ref in sync with state so callbacks always see the latest cache
-  useEffect(() => {
-    authorEmailsRef.current = authorEmails;
-  }, [authorEmails]);
+  // Guards against a slow response for a tab the user already left.
+  const requestRef = useRef<AbortController | null>(null);
+  const requestSeqRef = useRef(0);
+  // State, not a ref: the realtime watch below keys off it, and an effect
+  // dependency has to be something React can actually see change.
+  const [newestLoaded, setNewestLoaded] = useState<Date | null>(null);
 
   useEffect(() => {
     fetch(`${PYTHON_API}/health`)
@@ -74,80 +55,126 @@ export default function Feed({ uid }: FeedProps) {
   }, []);
 
   useEffect(() => {
-    getFollowingIds(uid).then(ids => setFollowingIds(ids));
     getSavedPostIds(uid).then(ids => setSavedIds(new Set(ids)));
   }, [uid]);
 
-  useEffect(() => {
-    const postsRef = collection(db, 'posts');
-    const q = query(postsRef, orderBy('createdAt', 'desc'));
-
-    const unsubscribe = onSnapshot(q, async (snapshot) => {
-      const snapshotPosts: Post[] = snapshot.docs.map(d => ({
-        id: d.id,
-        ...d.data(),
-        createdAt: d.data().createdAt?.toDate?.()?.toISOString() ?? new Date().toISOString(),
-      } as Post));
-
-      // Show unranked posts immediately on first load so feed appears fast
-      if (snapshotPosts.length > 0 && isFirstLoadRef.current) {
-        setPosts(snapshotPosts);
-        setLoading(false);
-        isFirstLoadRef.current = false;
-      }
-
-      // Fetch author emails for any new authors
-      const emails = await fetchAuthorEmails(snapshotPosts, db, authorEmailsRef.current);
-      setAuthorEmails(prev => ({ ...prev, ...emails }));
-
-      // Debounce ranking so rapid bursts of likes don't hammer Flask
-      if (rankDebounceRef.current) clearTimeout(rankDebounceRef.current);
-      rankDebounceRef.current = setTimeout(async () => {
-        try {
-          const userPreferences = await getUserPreferences(uid);
-          const response = await fetch(`${PYTHON_API}/rank`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ posts: snapshotPosts, userPreferences }),
+  /** Resolve author handles for any posts we have not seen before. */
+  const resolveHandles = useCallback(async (incoming: Post[]) => {
+    setHandles(previous => {
+      const missing = [...new Set(incoming.map(p => p.authorId))]
+        .filter(id => id && !previous[id]);
+      if (missing.length > 0) {
+        getPublicProfiles(missing).then(profiles => {
+          setHandles(current => {
+            const next = { ...current };
+            for (const id of missing) next[id] = displayHandle(profiles[id], id);
+            return next;
           });
-          if (response.ok) {
-            const ranked = await response.json();
-            setPosts(ranked);
-          } else {
-            setPosts(snapshotPosts);
-          }
-        } catch {
-          setPosts(snapshotPosts);
-        }
-        setLoading(false);
-      }, 300);
+        });
+      }
+      return previous;
     });
+  }, []);
 
-    // Clean up listener and any pending debounce when component unmounts
-    return () => {
-      unsubscribe();
-      if (rankDebounceRef.current) clearTimeout(rankDebounceRef.current);
-    };
-  }, [uid]);
+  const loadPage = useCallback(async (options: { append: boolean }) => {
+    // Supersede any request still in flight for a previous tab/category.
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
+    const seq = ++requestSeqRef.current;
+
+    if (options.append) setLoadingMore(true);
+    else { setLoading(true); setPosts([]); }
+    setPageError(null);
+
+    try {
+      const page = await fetchFeedPage(
+        {
+          mode: tab,
+          category: selectedCategory === 'all' ? null : selectedCategory,
+          cursor: options.append ? cursor : null,
+        },
+        controller.signal
+      );
+
+      // A newer request has started since this one; drop the stale result.
+      if (seq !== requestSeqRef.current) return;
+
+      setPosts(previous => {
+        if (!options.append) return page.posts;
+        // Belt and braces against duplicates across page boundaries.
+        const seen = new Set(previous.map(p => p.id));
+        return [...previous, ...page.posts.filter(p => !seen.has(p.id))];
+      });
+      setCursor(page.nextCursor);
+      setHasMore(page.hasMore);
+      resolveHandles(page.posts);
+
+      if (!options.append && page.posts.length > 0) {
+        const newest = page.posts
+          .map(p => new Date(p.createdAt))
+          .sort((a, b) => b.getTime() - a.getTime())[0];
+        setNewestLoaded(newest);
+        setNewPostCount(0);
+      }
+    } catch (error) {
+      if (seq !== requestSeqRef.current) return;
+      if (error instanceof ApiError && error.code === 'cancelled') return;
+      setPageError(
+        error instanceof ApiError ? error.message : 'Could not load the feed.'
+      );
+    } finally {
+      if (seq === requestSeqRef.current) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
+    }
+  }, [tab, selectedCategory, cursor, resolveHandles]);
+
+  // Reload page one whenever the tab or category changes. cursor is
+  // deliberately not a dependency: it changes as pages load.
+  useEffect(() => {
+    setCursor(null);
+    loadPage({ append: false });
+    return () => requestRef.current?.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, selectedCategory, uid]);
+
+  // Bounded realtime: watch only for posts newer than what we loaded, capped
+  // at a handful of documents, to drive a "new posts" pill. The old code held
+  // an onSnapshot over the entire posts collection, which grew without limit.
+  const feedIsEmpty = posts.length === 0;
+  useEffect(() => {
+    const newest = feedIsEmpty ? null : newestLoaded;
+    if (!newest) return;
+
+    const watch = query(
+      collection(db, 'posts'),
+      where('createdAt', '>', Timestamp.fromDate(newest)),
+      orderBy('createdAt', 'desc'),
+      fsLimit(NEW_POST_WATCH_LIMIT)
+    );
+    const unsubscribe = onSnapshot(
+      watch,
+      snapshot => setNewPostCount(snapshot.size),
+      () => { /* a failed watch must never break the feed */ }
+    );
+    return unsubscribe;
+  }, [newestLoaded, feedIsEmpty]);
 
   const handleLike = async (post: Post) => {
     if (likingIds.has(post.id)) return;
+    const wasLiked = Boolean(post.likedByMe);
 
-    const wasLiked = post.likedBy?.includes(uid) ?? false;
-
-    // Optimistic update
     setPosts(prev => prev.map(p =>
       p.id === post.id
         ? {
             ...p,
-            likesCount: wasLiked ? (p.likesCount || 1) - 1 : (p.likesCount || 0) + 1,
-            likedBy: wasLiked
-              ? p.likedBy?.filter(id => id !== uid)
-              : [...(p.likedBy || []), uid],
+            likesCount: wasLiked ? Math.max((p.likesCount || 1) - 1, 0) : (p.likesCount || 0) + 1,
+            likedByMe: !wasLiked,
           }
         : p
     ));
-
     setLikingIds(prev => new Set(prev).add(post.id));
 
     const didLike = await toggleLike(post.id, uid);
@@ -168,16 +195,14 @@ export default function Feed({ uid }: FeedProps) {
 
     setSavedIds(prev => {
       const next = new Set(prev);
-      wasSaved ? next.delete(post.id) : next.add(post.id);
+      if (wasSaved) next.delete(post.id);
+      else next.add(post.id);
       return next;
     });
     setSavingIds(prev => new Set(prev).add(post.id));
 
-    if (wasSaved) {
-      await unsavePost(uid, post.id);
-    } else {
-      await savePost(uid, post.id);
-    }
+    if (wasSaved) await unsavePost(uid, post.id);
+    else await savePost(uid, post.id);
 
     setSavingIds(prev => {
       const next = new Set(prev);
@@ -186,67 +211,58 @@ export default function Feed({ uid }: FeedProps) {
     });
   };
 
+  // Hiding is per-viewer only: the signal never touches the post itself.
+  const handleNotInterested = (postId: string) => {
+    setPosts(prev => prev.filter(p => p.id !== postId));
+  };
+
   const handleCommentAdded = (postId: string) => {
     setPosts(prev => prev.map(p =>
       p.id === postId ? { ...p, commentsCount: (p.commentsCount || 0) + 1 } : p
     ));
   };
 
-  // Discover: newest first; Following: filter to followed users; For You: ranked order
-  const tabPosts = tab === 'discover'
-    ? [...posts].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    : tab === 'following'
-    ? posts.filter(p => followingIds.includes(p.authorId))
-    : posts;
-
-  const visiblePosts = selectedCategory === 'all'
-    ? tabPosts
-    : tabPosts.filter(p => p.category === selectedCategory);
+  const tabButton = (mode: FeedMode, label: string) => (
+    <button
+      onClick={() => setTab(mode)}
+      className={`flex-1 md:flex-none px-4 py-1.5 rounded-full text-sm font-medium transition ${
+        tab === mode
+          ? 'bg-[var(--accent)] text-white'
+          : 'border border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)]'
+      }`}
+    >
+      {label}
+    </button>
+  );
 
   return (
     <div className="min-h-screen bg-[var(--bg)] pb-24 md:pb-6">
       {!apiOnline && (
         <div className="bg-yellow-100 text-yellow-800 text-sm px-4 py-2 text-center">
-          Ranking server is offline — showing unranked posts
+          Feed service is offline — try again shortly
         </div>
       )}
 
       <div className="pt-4 max-w-7xl mx-auto">
-        {/* For You / Discover toggle */}
         <div className="flex gap-2 px-4 md:px-6 mb-4">
-          <button
-            onClick={() => setTab('foryou')}
-            className={`flex-1 md:flex-none px-4 py-1.5 rounded-full text-sm font-medium transition ${
-              tab === 'foryou'
-                ? 'bg-[var(--accent)] text-white'
-                : 'border border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)]'
-            }`}
-          >
-            For You
-          </button>
-          <button
-            onClick={() => setTab('discover')}
-            className={`flex-1 md:flex-none px-4 py-1.5 rounded-full text-sm font-medium transition ${
-              tab === 'discover'
-                ? 'bg-[var(--accent)] text-white'
-                : 'border border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)]'
-            }`}
-          >
-            Discover
-          </button>
-          <button
-            onClick={() => setTab('following')}
-            className={`flex-1 md:flex-none px-4 py-1.5 rounded-full text-sm font-medium transition ${
-              tab === 'following'
-                ? 'bg-[var(--accent)] text-white'
-                : 'border border-[var(--border)] text-[var(--text)] hover:text-[var(--text-h)]'
-            }`}
-          >
-            Following
-          </button>
+          {tabButton('foryou', 'For You')}
+          {tabButton('discover', 'Discover')}
+          {tabButton('following', 'Following')}
         </div>
 
-        {/* Category filter bar — horizontal scroll on all sizes */}
+        {/* New-post indicator, driven by a bounded listener */}
+        {newPostCount > 0 && !loading && (
+          <div className="px-4 md:px-6 mb-4">
+            <button
+              onClick={() => { setCursor(null); loadPage({ append: false }); }}
+              data-testid="new-posts-pill"
+              className="w-full md:w-auto border border-[var(--accent)] text-[var(--accent)] rounded-full px-4 py-1.5 text-sm font-medium hover:bg-[var(--accent-bg)] transition"
+            >
+              {newPostCount === NEW_POST_WATCH_LIMIT ? `${newPostCount}+ new fits` : `${newPostCount} new ${newPostCount === 1 ? 'fit' : 'fits'}`} — tap to refresh
+            </button>
+          </div>
+        )}
+
         <div className="flex gap-2 overflow-x-auto pb-2 mb-4 scrollbar-hide -mx-4 px-4 md:mx-0 md:px-6">
           <button
             onClick={() => setSelectedCategory('all')}
@@ -273,7 +289,6 @@ export default function Feed({ uid }: FeedProps) {
           ))}
         </div>
 
-        {/* Posts */}
         {loading ? (
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 md:gap-6 px-4 md:px-6">
             {[0, 1, 2, 3].map(i => (
@@ -282,18 +297,18 @@ export default function Feed({ uid }: FeedProps) {
               </div>
             ))}
           </div>
-        ) : visiblePosts.length === 0 ? (
-          tab === 'following' && followingIds.length === 0 ? (
+        ) : pageError && posts.length === 0 ? (
+          <EmptyState
+            title="The feed didn't load"
+            message={pageError}
+            action={{ label: 'Try again', onClick: () => loadPage({ append: false }) }}
+          />
+        ) : posts.length === 0 ? (
+          tab === 'following' ? (
             <EmptyState
               title="Your circle starts here"
               message="Follow people whose style you admire and their fits will land in this tab."
               action={{ label: 'Browse Discover', onClick: () => setTab('discover') }}
-            />
-          ) : posts.length === 0 ? (
-            <EmptyState
-              title="The feed is waiting on you"
-              message="Be the first to share a fit — FitFeed reads its colors, garments, and aesthetic the moment it lands."
-              action={{ label: 'Upload a fit', onClick: () => navigate('/upload') }}
             />
           ) : selectedCategory !== 'all' ? (
             <EmptyState
@@ -303,31 +318,66 @@ export default function Feed({ uid }: FeedProps) {
             />
           ) : (
             <EmptyState
-              title="Quiet in here"
-              message="The people you follow haven't posted yet. Discover has plenty in the meantime."
-              action={{ label: 'Browse Discover', onClick: () => setTab('discover') }}
+              title="The feed is waiting on you"
+              message="Be the first to share a fit — FitFeed reads its colors, garments, and aesthetic the moment it lands."
+              action={{ label: 'Upload a fit', onClick: () => navigate('/upload') }}
             />
           )
         ) : (
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 md:gap-6 px-4 md:px-6">
-            {visiblePosts.map((post) => (
-              <div key={post.id} className="w-full max-w-2xl mx-auto">
-                <PostCard
-                  post={post}
-                  uid={uid}
-                  authorEmail={authorEmails[post.authorId] || post.authorId}
-                  isLiked={post.likedBy?.includes(uid) ?? false}
-                  onLike={() => handleLike(post)}
-                  liking={likingIds.has(post.id)}
-                  onCommentAdded={handleCommentAdded}
-                  isSaved={savedIds.has(post.id)}
-                  onToggleSave={() => handleToggleSave(post)}
-                  saving={savingIds.has(post.id)}
-                  rankingFactors={tab === 'foryou' ? post._rankingFactors : undefined}
-                />
-              </div>
-            ))}
-          </div>
+          <>
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 md:gap-6 px-4 md:px-6">
+              {posts.map((post) => (
+                <div key={post.id} className="w-full max-w-2xl mx-auto">
+                  <PostCard
+                    post={post}
+                    uid={uid}
+                    authorEmail={handles[post.authorId] || post.authorId}
+                    isLiked={Boolean(post.likedByMe)}
+                    onLike={() => handleLike(post)}
+                    liking={likingIds.has(post.id)}
+                    onCommentAdded={handleCommentAdded}
+                    isSaved={savedIds.has(post.id)}
+                    onToggleSave={() => handleToggleSave(post)}
+                    saving={savingIds.has(post.id)}
+                    rankingFactors={tab === 'foryou' ? post._rankingFactors : undefined}
+                    onNotInterested={handleNotInterested}
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div className="px-4 md:px-6 mt-6 flex flex-col items-center gap-3">
+              {loadingMore && (
+                <div className="w-full grid grid-cols-1 xl:grid-cols-2 gap-4 md:gap-6">
+                  {[0, 1].map(i => (
+                    <div key={i} className="w-full max-w-2xl mx-auto">
+                      <PostCardSkeleton />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {pageError && posts.length > 0 && (
+                <p className="text-sm text-[var(--text)]">{pageError}</p>
+              )}
+
+              {hasMore && !loadingMore && (
+                <button
+                  onClick={() => loadPage({ append: true })}
+                  data-testid="load-more"
+                  className="border border-[var(--border)] rounded-full px-5 py-2 text-sm font-medium text-[var(--text-h)] hover:border-[var(--accent)] hover:text-[var(--accent)] transition"
+                >
+                  {pageError ? 'Retry' : 'Load more'}
+                </button>
+              )}
+
+              {!hasMore && !loadingMore && posts.length > 0 && (
+                <p className="text-xs uppercase tracking-widest text-[var(--text)] opacity-50 py-2">
+                  You're all caught up
+                </p>
+              )}
+            </div>
+          </>
         )}
       </div>
     </div>
