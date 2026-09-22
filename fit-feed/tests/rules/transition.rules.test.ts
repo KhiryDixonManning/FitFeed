@@ -50,6 +50,16 @@ async function readPost() {
   return data;
 }
 
+async function readLikeIds(): Promise<string[]> {
+  const { getDocs } = await import('firebase/firestore');
+  let ids: string[] = [];
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const snap = await getDocs(collection(doc(ctx.firestore(), 'posts/post1'), 'likes'));
+    ids = snap.docs.map((d) => d.id).sort();
+  });
+  return ids;
+}
+
 /** Exactly what the deployed client sends. */
 function legacyLike(db: unknown, uid: string) {
   return updateDoc(doc(db as never, 'posts/post1'), {
@@ -146,6 +156,58 @@ describe('TRANSITIONAL: the new client also works', () => {
     const post = await readPost();
     expect(post.likesCount).toBe(1);
     expect(post.likedBy).toEqual([]);
+  });
+});
+
+describe('TRANSITIONAL: an old-client unlike leaves the like document behind', () => {
+  // The premise of the Phase G prune, proven at the rules layer rather than
+  // assumed by the Python lifecycle test that simulates it.
+  beforeEach(async () => {
+    await env.clearFirestore();
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      // Post-migration state: the user holds BOTH representations.
+      await setDoc(doc(ctx.firestore(), 'posts/post1'), postDoc(ALICE, {
+        likesCount: 1, likedBy: [BOB],
+      }));
+      await setDoc(
+        doc(collection(doc(ctx.firestore(), 'posts/post1'), 'likes'), BOB),
+        { uid: BOB, createdAt: 'migrated' }
+      );
+    });
+  });
+
+  it('the legacy unlike is permitted and removes only the array entry', async () => {
+    const db = asUser(env, BOB, BOB_EMAIL).firestore();
+    await assertSucceeds(legacyUnlike(db, BOB));
+
+    const post = await readPost();
+    expect(post.likedBy).toEqual([]);
+    expect(post.likesCount).toBe(0);
+    // The old client cannot reach the subcollection, so the document remains.
+    expect(await readLikeIds()).toEqual([BOB]);
+  });
+
+  it('the old client cannot delete the like document itself', async () => {
+    const db = asUser(env, BOB, BOB_EMAIL).firestore();
+    // Even its owner cannot remove it as part of the legacy mutation: the
+    // changed-key pin forbids anything but likesCount and likedBy, and a
+    // subcollection delete is a separate write the old client never makes.
+    await assertFails(
+      updateDoc(doc(db, 'posts/post1'), {
+        likesCount: increment(-1),
+        likedBy: arrayRemove(BOB),
+        likes: null,
+      })
+    );
+    expect(await readLikeIds()).toEqual([BOB]);
+  });
+
+  it('leaves the post readable as still-liked until a prune runs', async () => {
+    const db = asUser(env, BOB, BOB_EMAIL).firestore();
+    await assertSucceeds(legacyUnlike(db, BOB));
+    // Which is why Phase G must prune: the subcollection is what the new
+    // client reads, and it still says liked.
+    expect(await readLikeIds()).toContain(BOB);
   });
 });
 

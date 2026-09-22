@@ -338,49 +338,107 @@ python reconcile_likes.py          # dry run; expect drifted=0, orphaned=0
 
 ## Phase G — Final legacy-tail handling
 
-Old clients that were still live during the window wrote `likedBy` entries
-with no like document. This picks them up.
+Two things happened during the window that only the Admin SDK can resolve.
+Old clients wrote `likedBy` entries with no like document, and old clients
+**unliked** posts without being able to delete the like document underneath.
+This phase closes both.
 
-**Actions**
+**Run this after the observation window has closed and before Phase H.**
+
+### Actions — run in this order
 
 ```bash
 cd fit-feed/python-backend
-python migrate_likes.py                 # dry run: review the plan first
-python migrate_likes.py --apply
-python migrate_likes.py --verify
-python reconcile_likes.py               # dry run
-python reconcile_likes.py --apply       # if it reported anything
-```
 
-**What the rerun does and does not do.** A uid in `likedBy` with no like
-document is ambiguous — either a real tail-window like, or a like the user
-deliberately removed on the new client (which deletes the document but cannot
-touch the array). The `likedByMigrated` watermark written in Phase D
-distinguishes them:
+# 1. Review the plan. Writes nothing.
+python migrate_likes.py
 
-- in `likedBy`, **not** in the watermark → tail-window like → **created**
-- in `likedBy`, **in** the watermark, no document → intentionally removed →
-  **left removed**, logged as `PRESERVE`
-
-Without the watermark this rerun would resurrect every like anyone unliked
-after cutover, and re-increment the counter. It does not.
-
-You may also see `STALE` lines: a like document whose owner unliked on an
-*old* client, which cannot delete the document. Not deleted by default.
-Review them, then optionally:
-
-```bash
+# 2. Backfill tail-window likes AND prune stale documents.
+#    --prune-stale is REQUIRED here. See below.
 python migrate_likes.py --apply --prune-stale
+
+# 3. Prove the result.
+python migrate_likes.py --verify
+
+# 4. Reconcile counters and sweep orphans from deleted posts.
+python reconcile_likes.py
+python reconcile_likes.py --apply        # if step 4's dry run reported anything
 ```
 
-**Expected result** — `VERIFY OK`; `CREATE` counts match the dry run;
-`PRESERVE` lines for post-cutover removals; `reconcile_likes.py` clean.
+### `--prune-stale` is required, not optional
+
+The flag is opt-in at the CLI so that no routine run can delete data by
+accident. **The production migration must pass it at this point**, because
+without it one case stays permanently wrong.
+
+An old client can unlike: the transitional rules permit
+`{ likesCount: increment(-1), likedBy: arrayRemove(uid) }`. That removes the
+array entry and decrements the counter, but the old client cannot touch
+`posts/{id}/likes/{uid}` — no rule lets any client delete another
+representation of the like. So the state becomes:
+
+```
+uid in M       (the migration backfilled them)
+uid not in L   (they unliked on the old client)
+uid in D       (the document they could not delete)
+```
+
+The new client reads **D**. Without the prune, a user who unliked still sees
+the post as liked, forever, with no way to clear it — the mirror image of the
+resurrection bug the watermark fixes. `--prune-stale` deletes exactly those
+documents, and the counter then follows the documents.
+
+`test_migration_lifecycle_e2e.py::test_without_prune_the_user_stays_liked`
+asserts this failure mode directly, so the requirement cannot quietly lapse.
+
+### Why this timing is safe
+
+The prune deletes a like document whenever `uid in M and uid not in L`. That
+inference — "they left the array, so they unliked" — is only sound once **no
+client can still be writing `likedBy`**:
+
+- **Too early** (during the window) an old client could unlike and re-like
+  moments later. Pruning between the two would delete a document the user is
+  about to want back. Running after the observation window closes means old
+  clients have drained, so `L` has stopped moving.
+- **Too late** (after Phase H) is harmless but pointless: strict rules already
+  froze `likedBy`, and those users would have spent the whole interval
+  incorrectly shown as liked.
+
+So: **after the window, before strict rules.** At that point `L` is stable,
+every difference between `M` and `L` is a settled decision, and the prune
+resolves it exactly once.
+
+### What the four outcomes are
+
+| State | Meaning | Phase G does |
+| --- | --- | --- |
+| in `L`, not in `M`, no doc | tail-window legacy like | **creates** the document |
+| in `M`, in `L`, no doc | unliked on the **new** client | **leaves it removed** (`PRESERVE`) |
+| in `M`, not in `L`, doc exists | unliked on an **old** client | **prunes** the document (`STALE`) |
+| in `M`, in `L`, doc exists | still liked, e.g. unliked then re-liked | **leaves it alone** |
+
+Together these make it impossible for a new-client unlike to be resurrected,
+an old-client unlike to remain liked, a legitimate tail-window like to be
+lost, or the counter to diverge from the documents.
+
+**Expected result**
+- `VERIFY OK`.
+- `CREATE` counts match the step-1 dry run.
+- `PRESERVE` lines for new-client removals, `STALE` lines for the pruned ones.
+- `reconcile_likes.py` reports `drifted=0`, `orphaned=0`.
 
 **STOP if**
 - `--verify` is not clean.
 - `CREATE` counts are far above the dry run — investigate before applying.
+- `STALE` counts are implausibly large relative to your active user base;
+  that would suggest something other than old-client unlikes is deleting
+  array entries.
 
-**Rollback route** — **R6**.
+**Rollback route** — **R6**. Note the prune is the one genuinely destructive
+step in the whole rollout: it deletes like documents. The Phase B backup is
+the reference if you need to reconstruct them, and step 1's dry run tells you
+exactly how many will go before you commit to it.
 
 ---
 
@@ -676,7 +734,7 @@ cd python-backend
 python migrate_likes.py                     # dry run
 python migrate_likes.py --apply
 python migrate_likes.py --verify
-python migrate_likes.py --apply --prune-stale   # only if STALE was reported
+python migrate_likes.py --apply --prune-stale   # Phase G: REQUIRED, not optional
 
 python reconcile_likes.py                   # dry run: drift + orphans
 python reconcile_likes.py --apply
