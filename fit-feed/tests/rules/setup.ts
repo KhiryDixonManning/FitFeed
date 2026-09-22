@@ -13,7 +13,13 @@ export const PROJECT_ID = 'fitfeed-rules-test';
 
 /** Reads a rules file from the project root. */
 export function readRules(name: string): string {
-  return readFileSync(resolve(here, '../..', name), 'utf8');
+  // Normalised to LF. Git checks these out with CRLF on Windows, and the
+  // mutation tests locate clauses with multi-line template literals, whose
+  // newlines JavaScript always normalises to LF - so a CRLF file made those
+  // searches silently miss and the mutation become a no-op. Firestore does
+  // not care about line endings, so normalising here costs nothing and makes
+  // every rules read behave the same on Windows and on CI.
+  return readFileSync(resolve(here, '../..', name), 'utf8').split('\r\n').join('\n');
 }
 
 export const ALICE = 'alice_uid';
