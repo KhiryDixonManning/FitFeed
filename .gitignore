@@ -20,6 +20,9 @@ node_modules/
 .idea/
 .vscode/
 
+# Database exports taken before a migration. Real user data.
+backups/
+
 # Build and test output
 dist/
 build/

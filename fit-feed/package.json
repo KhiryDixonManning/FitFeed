@@ -26,7 +26,11 @@
     "rules:check": "node scripts/build-transition-rules.mjs --check",
     "deploy:rules:strict": "node scripts/deploy-rules.mjs strict",
     "deploy:rules:transition": "node scripts/deploy-rules.mjs transition",
-    "rehearse:migration": "firebase emulators:exec --only firestore --project fitfeed-rules-test \"node scripts/rehearse-migration.mjs\""
+    "rehearse:migration": "firebase emulators:exec --only firestore --project fitfeed-rules-test \"node scripts/rehearse-migration.mjs\"",
+    "backup:firestore": "cd python-backend && python export_firestore.py",
+    "backup:verify": "cd python-backend && python export_firestore.py --verify",
+    "smoke:production": "node scripts/smoke-production.mjs",
+    "reconcile:likes": "cd python-backend && python reconcile_likes.py"
   },
   "dependencies": {
     "firebase": "^12.11.0",

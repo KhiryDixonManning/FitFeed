@@ -1,283 +1,410 @@
 # Production rollout: the like migration
 
-The runbook for taking FitFeed from the currently deployed build to this one.
-Follow it in order. Every command is copy-pasteable and every step says what
-"good" looks like before you move on.
-
-Read [Like architecture](#like-architecture-what-is-true-at-each-stage) first
-if you have not — the ordering constraints come from there, and improvising
-around them breaks likes for live users.
+The operator runbook. Nine phases, in order. Every phase states its commands,
+what "good" looks like, the conditions that mean **STOP**, and its rollback
+route.
 
 > **Nothing here has been run.** No deployment has happened and no production
-> migration has been executed. This document describes what to do, not what
-> was done.
+> migration has been executed. This describes what to do, not what was done.
+
+**Rehearse first.** `npm run rehearse:migration` walks this whole sequence
+against the local emulator and fails loudly if any step behaves differently
+from this document. It refuses to run against anything but a local emulator.
+
+**Contents:** [A Prerequisites](#phase-a--pre-deploy-prerequisites) ·
+[B Backup](#phase-b--backuprecovery-readiness) ·
+[C Dry run](#phase-c--migration-dry-run) ·
+[D Transitional rules](#phase-d--transitional-rules) ·
+[E Cutover](#phase-e--backendclient-cutover) ·
+[F Observation](#phase-f--48h-observation-window) ·
+[G Legacy tail](#phase-g--final-legacy-tail-handling) ·
+[H Strict rules](#phase-h--strict-rules) ·
+[I Cleanup](#phase-i--transitional-code-cleanup) ·
+[Rollback](#rollback) · [Architecture](#like-architecture-reference)
 
 ---
 
-## Like architecture: what is true at each stage
+## Phase A — Pre-deploy prerequisites
 
-### Legacy schema (currently in production)
-
-```
-posts/{postId}
-  likesCount: number          denormalised counter
-  likedBy:    string[]        every liker's uid, unbounded, on the post document
-```
-
-One write toggles both: `{ likesCount: increment(±1), likedBy: arrayUnion/arrayRemove(uid) }`.
-
-### New schema (this branch)
-
-```
-posts/{postId}
-  likesCount: number          denormalised counter, unchanged
-
-posts/{postId}/likes/{uid}
-  uid:       string           always equals the document id
-  createdAt: string           ISO 8601
-```
-
-The document id **is** the liker's uid, so "one like per user per post" is a
-property of the schema rather than something to enforce. The post document
-stops growing with its audience.
-
-### Answers to the questions that decide the rollout
-
-| Question | Answer |
-| --- | --- |
-| Is historical `likedBy` migrated? | **Yes** — `migrate_likes.py --apply` creates a like document for every array entry. |
-| Is `likedBy` dual-read? | **No.** The subcollection is the only source of truth. A fallback would be permanently wrong: no client can write `likedBy` under strict rules, so an unliked-after-migration post would show as liked forever. |
-| Is `likedBy` deleted? | **No.** Retained as the rollback path. Retiring it is a separate change, step 11. |
-| Source of truth for "did I like this?" | `posts/{postId}/likes/{uid}` exists. Backend: `attach_liked_by_me`. Client: `hasLiked` / `getLikedPostIds`. |
-| Source of truth for `likesCount` | The counter field, kept honest by the rules (±1, only paired with the caller's own like document appearing or disappearing, checked against post-commit state). The like documents are the recount authority when they disagree. |
-| Simultaneous likes by different users | Independent documents, independent `increment()`. Both land. Verified in `migration.lifecycle.test.ts` at 2 and 4 concurrent likers. |
-| Duplicate / double-click | The transaction reads the like document before deciding, so the second call toggles rather than stacking. The counter always equals the document count. |
-| Offline / retry | The write is a Firestore transaction; a retry re-reads and re-decides. A retried like is idempotent. Firestore's offline queue replays the transaction on reconnect. |
-| Can counts drift? | **Yes, narrowly.** The rules permit deleting a like document *without* decrementing (the counter pairing is only enforced when the counter moves). Nothing in the app does this, but a console user could. Also possible from a partially applied legacy write during the window. |
-| Is reconciliation needed? | **Yes, as maintenance.** `reconcile_likes.py` recounts and realigns. Dry run by default. |
-| Post deletion cleanup | **Incomplete by design.** Firestore does not cascade-delete subcollections, and the rules only let a user delete their *own* like — so an author cannot clean up other people's. Orphaned likes are unreachable from the UI and cannot corrupt a count, but they accumulate. `reconcile_likes.py` sweeps them with the Admin SDK. |
-| User deletion cleanup | **Not implemented.** There is no account-deletion flow. If one is added it must remove `posts/*/likes/{uid}`, `users/{uid}/**`, `saves/{uid}_*`, `follows/{uid}_*` and `userTasteState/{uid}`. Tracked in [transition-cleanup.md](transition-cleanup.md). |
-| When can `isLegacyLikeToggle()` be removed? | See [the exact condition](#the-exact-condition-for-removing-islegacylikertoggle). |
-
-### The exact condition for removing `isLegacyLikeToggle()`
-
-All four must hold:
-
-1. The strict rules are live in production (step 9 done).
-2. `migrate_likes.py --verify` reports clean — every `likedBy` entry has a
-   matching like document.
-3. No client in the wild writes `likedBy`. In practice: hosting has served the
-   new bundle for longer than any plausible tab lifetime, and Firestore usage
-   metrics show no `permission-denied` writes against `posts/*`.
-4. `reconcile_likes.py` reports no drift.
-
-Until all four hold, the transitional file stays in the repository — it is the
-rollback path. Removal is step 11, tracked in
-[transition-cleanup.md](transition-cleanup.md).
-
----
-
-## Before you start
+**Actions**
 
 ```bash
 cd fit-feed
 npm ci
 npm run verify                 # everything CI runs
-npm run rehearse:migration     # walks this whole sequence against emulators
+npm run rehearse:migration     # the whole sequence, against emulators
 ```
 
-`rehearse:migration` is the important one. It runs strict → transitional →
-backfill → new client → strict against the local emulator and fails loudly if
-any step behaves differently from this document. It refuses to run against
-anything but a local emulator.
+Have open and ready:
 
-Have ready:
+- Firebase console → Firestore → **Rules**, **Usage**, **Data**
+- Railway → both services → **Deployments** and **Logs**
+- A signed-in test account **that has liked at least one post already** —
+  you need it in Phase E to prove the backfill worked.
 
-- Firebase console open on the project, Firestore → Rules and → Usage.
-- Railway open on both services.
-- The output of a dry-run migration (step 1) so you know the expected numbers.
+**Expected result** — `npm run verify` green; rehearsal prints
+`Rehearsal passed`.
 
-Pick a low-traffic window. Steps 7→8 are the only ones with a user-visible
-gap, and you want it short.
+**STOP if**
+- Anything in `verify` is red.
+- The rehearsal fails any check.
+- You do not have an account with a pre-existing like. Without it the most
+  important validation in Phase E cannot be performed.
+
+**Rollback route** — none needed; nothing has changed.
 
 ---
 
-## The sequence
+## Phase B — Backup/recovery readiness
 
-### Step 1 — Dry-run the like migration
+**This phase is a hard gate. Do not enter Phase C without a verified backup.**
+
+### What must be backed up
+
+| Data | Why |
+| --- | --- |
+| `posts` (incl. `likes` subcollection) | The migration writes here |
+| `comments`, `saves`, `follows` | Related user data |
+| `users`, `publicProfiles`, `userPreferences` | Profiles |
+| `userTasteState`, `userTasteVectors` | Recommendation state |
+| `analysisJobs` | Attempt budgets |
+| Auth accounts | Separate export; see below |
+
+Storage objects (post images) are **not** included and are not touched by the
+migration.
+
+### Option 1 — Google managed backup (preferred, needs Blaze)
+
+Requires: **Blaze billing**, the `gcloud` CLI, a GCS bucket, and the
+`datastore.databases.export` IAM permission (roles/datastore.importExportAdmin).
+
+```bash
+gcloud config set project fitfeed-67ee8
+gcloud firestore export gs://<your-bucket>/pre-like-migration-$(date +%Y%m%d)
+gcloud firestore operations list        # wait for DONE
+```
+
+Restore: `gcloud firestore import gs://<bucket>/<path>`.
+
+The Firebase CLI **has no one-shot `firestore:export`** — it offers scheduled
+backups only (`firebase firestore:backups:schedules:create`, also Blaze) and
+`firebase firestore:databases:restore`. A schedule is not a pre-migration
+snapshot; use `gcloud` for that.
+
+### Option 2 — Repository export (any tier, no gcloud, no GCS)
+
+If the project is on **Spark**, or `gcloud` is not installed, or you lack the
+IAM permission, neither managed option is available. Use the export shipped in
+this repository, which needs nothing beyond the Admin SDK credentials the
+backend already uses:
+
+```bash
+cd fit-feed
+npm run backup:firestore -- --out ../backups/$(date +%Y%m%d)-pre-migration
+npm run backup:verify    -- ../backups/$(date +%Y%m%d)-pre-migration
+```
+
+**Where it goes:** a directory you choose, outside the repository (`backups/`
+is gitignored). Put it somewhere durable — not only your laptop.
+
+**How completion is verified:** `--verify` re-reads every file, checks the
+SHA-256 in the manifest, confirms the line count matches, and parses every
+line. It exits non-zero on a missing, short, corrupted or unparseable file.
+A truncated export cannot pass.
+
+**How it restores:** the format is newline-delimited JSON, one file per
+collection, with `{"id": ..., "data": ...}` per line. Restoring is a
+deliberate, reviewed operation — write the loop against the Admin SDK at the
+time, targeting only the collections you actually need. **There is no
+one-command restore on purpose**: an unreviewed bulk restore is how a partial
+outage becomes a total one.
+
+**Its limits, stated plainly:** not point-in-time consistent across
+collections (it reads them in sequence), no PITR, and it excludes Storage and
+Auth. For this migration that is acceptable — the migration only *adds* like
+documents and adjusts a counter, so the recovery that matters is the targeted
+rollback in [Rollback](#rollback), and this snapshot is the backstop for the
+catastrophic case.
+
+### Auth accounts (either option)
+
+```bash
+cd fit-feed
+npx firebase auth:export ../backups/$(date +%Y%m%d)-auth.json --format=json
+```
+
+Works on any tier.
+
+**Expected result** — a backup directory or GCS path, and a **verification
+that passed**.
+
+**STOP if**
+- `--verify` fails, or the `gcloud` operation did not reach `DONE`.
+- The backup lives only on the machine running the migration.
+- You have not confirmed *how* you would restore it.
+
+**Rollback route** — none needed; nothing has changed.
+
+---
+
+## Phase C — Migration dry run
+
+**Actions**
 
 ```bash
 cd fit-feed/python-backend
 python migrate_likes.py
 ```
 
-**Good:** a count of like documents that *would* be created, and a list of any
-post whose `likesCount` disagrees with its distinct liker count. Nothing is
-written.
+**Expected result** — a plan: how many like documents *would* be created, any
+`ANOMALY` lines (duplicate array entries), any `RECONCILE` lines. **Nothing is
+written.**
 
-**Record the numbers.** You will compare against them in step 3.
+**Record the numbers.** You compare against them in Phase G.
 
-### Step 2 — Apply the migration
+**STOP if**
+- The created count is wildly different from your expectation of the data.
+- Anomalies appear on more posts than you can explain.
+
+**Rollback route** — none needed; a dry run writes nothing.
+
+---
+
+## Phase D — Transitional rules
+
+**Actions**
 
 ```bash
+cd fit-feed/python-backend
 python migrate_likes.py --apply
-```
-
-**Good:** created counts match the dry run. Idempotent — safe to re-run.
-`likedBy` is untouched.
-
-### Step 3 — Verify the migration
-
-```bash
 python migrate_likes.py --verify
-```
 
-**Good:** clean. Every post's like-document count equals `likesCount`.
-
-**Do not continue until this is clean.** Everything downstream assumes the
-subcollection is complete.
-
-### Step 4 — Deploy indexes, and wait for them
-
-```bash
-cd fit-feed
-firebase deploy --only firestore:indexes
-```
-
-Then **wait until every index reads Enabled** in the console. Index builds are
-asynchronous; a query against a building index fails with
-`FAILED_PRECONDITION`, which would turn the new backend into an error loop.
-
-Needed: the collection-group `likes` index, both `analysisJobs` indexes, and
-the `interactions` index.
-
-### Step 5 — Deploy the transitional rules
-
-```bash
+cd ..
+firebase deploy --only firestore:indexes     # then WAIT for Enabled
 npm run deploy:rules:transition
 ```
 
-**Good:** the script prints the file, the policy and its consequence, confirms
-the generated file is in sync, then deploys.
+`--apply` creates a like document per legacy array entry and records the
+`likedByMigrated` watermark. `likedBy` is **not** modified.
 
-**What this buys:** the old client (which writes `likedBy`) and the new client
-(which writes a like document) both work. Without it, one of them is broken
-for the whole window.
+Index builds are asynchronous. Wait until every index reads **Enabled** in the
+console — a query against a building index fails `FAILED_PRECONDITION`, which
+would turn the new backend into an error loop.
 
-### Step 6 — Smoke-test the deployed legacy client
+**Expected result**
+- `--verify` reports `VERIFY OK`.
+- All indexes Enabled.
+- The rules deploy prints the file and policy before shipping.
 
-Before changing anything else, confirm the clients already in the wild still
-work under the new rules.
+**Now smoke-test the client that is still live** (it is the old bundle):
 
-1. Open the live site in a fresh browser profile — this is the old bundle.
-2. Like a post. **Good:** the heart fills and the count increments.
-3. Unlike it. **Good:** it reverts.
-4. Post a comment. **Good:** it appears and the count increments.
-5. Console → Firestore → Usage. **Good:** no spike in permission-denied.
+1. Open the live site in a fresh browser profile.
+2. Like a post → heart fills, count increments.
+3. Unlike it → reverts.
+4. Post a comment → appears, count increments.
+5. Console → Firestore → Usage → no permission-denied spike.
 
-**If likes fail here, stop and roll back** (see
-[Rollback](#rollback)). Everything after this point assumes the old client is
-healthy.
+**STOP if**
+- `--verify` is not clean. Everything downstream assumes the subcollection is
+  complete.
+- Any index is still building.
+- The legacy client cannot like. → **R1**
 
-### Step 7 — Deploy the Railway worker, then the web service
+**Rollback route** — **R1** (rules) and **R6** (migration).
 
-Worker first: on an empty queue it is a no-op, whereas web-first leaves new
-uploads sitting at "Queued" with nothing draining them.
+---
+
+## Phase E — Backend/client cutover
+
+Worker first (a no-op on an empty queue), then web, then hosting. Keep steps
+close together.
+
+**Actions**
 
 ```
 Railway → worker service → Deploy
 Railway → web service    → Deploy
 ```
 
-**Good:**
-
-```bash
-curl -s https://<api-host>/health                        # {"status":"ok"}
-curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<api-host>/feed   # 401
-```
-
-401, not 200 and not 500. The worker's logs should show it polling.
-
-> The old client calls `/rank`, which this backend removes. Its feed is
-> degraded from here until step 8. Keep the gap short.
-
-### Step 8 — Deploy the frontend
-
 ```bash
 cd fit-feed
-npm run build
-firebase deploy --only hosting
+npm run smoke:production -- --api https://<api-host>
+npm run build && firebase deploy --only hosting
+npm run smoke:production -- --api https://<api-host> --site https://<site-host>
 ```
 
-**Good:** hard-reload the live site; the bundle hash changes.
+`smoke:production` is read-only: it performs no likes, no writes and needs no
+credentials. It checks health, that every protected route rejects an
+unauthenticated call, that the removed `/rank` really is gone, that the
+maintenance endpoint is not public, and that hosting serves the app shell.
 
-### Step 9 — Validate the new like path
+**Then validate the like path by hand**, signed in as the account that liked
+something before the migration:
 
-On the live site, signed in as a **test account that liked something before
-the migration**:
+1. Open a post you liked previously → **the heart is filled.** The backfill
+   worked.
+2. Unlike it → empties, count drops.
+3. **Reload.** → **still empty.** This is the check that catches the
+   stale-array class of bug. If the heart refills, something is reading
+   `likedBy` that should not be.
+4. Like a new post, reload → stays filled.
+5. Double-click a like → the count moves by one, not two.
+6. Same post in two tabs, like in one → no drift.
 
-1. Open a post you liked previously. **Good:** the heart is filled — the
-   backfill worked.
-2. Unlike it. **Good:** it empties, the count drops.
-3. Reload. **Good:** it is *still* empty. This is the check that catches the
-   stale-array bug class — if the heart refills, the backend is reading
-   `likedBy` somewhere it should not.
-4. Like a new post, reload. **Good:** it stays filled.
-5. Double-click a like rapidly. **Good:** the count moves by one, not two.
-6. Open the same post in two tabs, like in one. **Good:** no drift.
+```bash
+cd python-backend && python reconcile_likes.py      # dry run
+```
 
-Then check data integrity:
+**Expected result** — smoke tests all pass; every manual check behaves as
+above; `reconcile_likes.py` reports `drifted=0`.
+
+**STOP if**
+- Any smoke check fails.
+- The heart refills after reload (step 3). That is a correctness bug, not
+  cosmetic. → **R2**
+- Drift appears immediately.
+
+**Rollback route** — **R2** (hosting), **R3** (web), **R4** (worker).
+
+### What users experience between the web and hosting deploys
+
+The gap is real but mild, and it is **cosmetic, not destructive**.
+
+The deployed client calls `/rank` and `/trending` inside `try/catch` blocks
+that fall back to `return posts`:
+
+```js
+} catch (error) {
+    console.warn("Python API unavailable, falling back to unranked feed:", error);
+    return posts;
+}
+```
+
+So when the new backend answers `404` (for the removed `/rank`) or `401`
+(those old calls send no auth header), the old client catches it and renders
+**the unranked feed**. Concretely:
+
+| | |
+| --- | --- |
+| **What users see** | Posts in Firestore order instead of ranked order. No error, no empty state. |
+| **Duration** | Minutes — the length of one `npm run build && firebase deploy --only hosting`. |
+| **Requests that fail** | `POST /rank` → 404; `POST /trending` → 401. Both are caught. |
+| **Existing tabs** | Unaffected beyond the ordering. They keep working; likes and comments still succeed under the transitional rules. |
+| **Data loss** | **None.** Only reads fail, and they fail into a fallback. No write is attempted on this path. |
+| **Continue signal** | Feeds render (unranked is fine); like/comment still work; no permission-denied spike. |
+| **Rollback signal** | Likes or comments failing, or blank/erroring feeds — that is not this gap and means something else is wrong. → **R3** |
+
+**Could the gap be closed?** Only by re-adding a `/rank` shim to the new
+backend — more transitional code to build, test, deploy and later remember to
+delete, in order to fix an ordering difference the client already handles by
+design, for a few minutes. That is more risk than it removes, so the
+architecture is left alone.
+
+---
+
+## Phase F — 48h observation window
+
+Leave the transitional rules in place **at least 48 hours**, longer if your
+users keep tabs open.
+
+### What to watch, and where
+
+Existing Firebase and Railway tooling is sufficient. No monitoring platform is
+added for this migration.
+
+| Signal | Where | Investigate at | Roll back at |
+| --- | --- | --- | --- |
+| **Permission-denied spike** | Firebase console → Firestore → Usage | Any sustained rise above baseline | A step change coinciding with a deploy → **R1**/**R5** |
+| **Failed like/unlike** | Railway web logs; user reports; browser console | Any `permission-denied` on `posts/*` | Reproducible failure on a current client → **R2** |
+| **Migration errors** | `migrate_likes.py` output | Any `ANOMALY` | Any `MISMATCH` or `UNMIGRATED` at Phase G → **R6** |
+| **Counter drift** | `python reconcile_likes.py` daily | Any `DRIFT` line | Drift growing run over run → investigate before **R** anything |
+| **Reconciliation failure** | Its exit code (non-zero on failure) | Non-zero exit | Repeated non-zero → stop the window |
+| **Backend exceptions** | Railway → web → Logs | Any 5xx | Sustained 5xx on `/feed` → **R3** |
+| **Worker failures** | Railway → worker → Logs | Jobs not draining; repeated `STALE` | Queue growing unboundedly → **R4** |
+| **Frontend deploy failure** | `firebase deploy` output; Hosting release list | A release that did not publish | Site serving the wrong bundle → **R2** |
+
+### Daily during the window
 
 ```bash
 cd fit-feed/python-backend
-python reconcile_likes.py            # dry run
+python reconcile_likes.py          # dry run; expect drifted=0, orphaned=0
 ```
 
-**Good:** `drifted=0`. Any drift is reported per post; investigate before
-continuing.
+**Expected result** — flat permission-denied, no 5xx trend, `drifted=0`.
 
-### Step 10 — Monitor
+**STOP if** — any "Roll back at" column is met.
 
-Leave the transitional rules in place for **at least 48 hours**, longer if
-your users keep tabs open. Watch:
+---
 
-| Where | What is bad |
-| --- | --- |
-| Firebase console → Firestore → Usage | Rising permission-denied writes |
-| Railway web logs | 4xx/5xx spikes on `/feed`, `/interactions` |
-| Railway worker logs | Jobs failing, or the queue not draining |
-| `python reconcile_likes.py` | Any `DRIFT` lines |
+## Phase G — Final legacy-tail handling
 
-Re-run the migration once more near the end of the window:
+Old clients that were still live during the window wrote `likedBy` entries
+with no like document. This picks them up.
+
+**Actions**
 
 ```bash
+cd fit-feed/python-backend
+python migrate_likes.py                 # dry run: review the plan first
 python migrate_likes.py --apply
 python migrate_likes.py --verify
+python reconcile_likes.py               # dry run
+python reconcile_likes.py --apply       # if it reported anything
 ```
 
-This picks up likes the old client created *during* the window, which have an
-array entry but no like document. **Clean verify required before step 11.**
+**What the rerun does and does not do.** A uid in `likedBy` with no like
+document is ambiguous — either a real tail-window like, or a like the user
+deliberately removed on the new client (which deletes the document but cannot
+touch the array). The `likedByMigrated` watermark written in Phase D
+distinguishes them:
 
-### Step 11 — Switch back to strict rules
+- in `likedBy`, **not** in the watermark → tail-window like → **created**
+- in `likedBy`, **in** the watermark, no document → intentionally removed →
+  **left removed**, logged as `PRESERVE`
 
-Only once all of:
+Without the watermark this rerun would resurrect every like anyone unliked
+after cutover, and re-increment the counter. It does not.
 
-- [ ] Hosting has served the new bundle for longer than any plausible tab life
-- [ ] `migrate_likes.py --verify` is clean
+You may also see `STALE` lines: a like document whose owner unliked on an
+*old* client, which cannot delete the document. Not deleted by default.
+Review them, then optionally:
+
+```bash
+python migrate_likes.py --apply --prune-stale
+```
+
+**Expected result** — `VERIFY OK`; `CREATE` counts match the dry run;
+`PRESERVE` lines for post-cutover removals; `reconcile_likes.py` clean.
+
+**STOP if**
+- `--verify` is not clean.
+- `CREATE` counts are far above the dry run — investigate before applying.
+
+**Rollback route** — **R6**.
+
+---
+
+## Phase H — Strict rules
+
+**Only once all of these hold:**
+
+- [ ] Hosting has served the new bundle longer than any plausible tab life
+- [ ] Phase G `--verify` clean
 - [ ] `reconcile_likes.py` reports no drift
-- [ ] No permission-denied spike in the monitoring window
+- [ ] No permission-denied spike during Phase F
+
+**Actions**
 
 ```bash
 cd fit-feed
 npm run deploy:rules:strict
 ```
 
-### Step 12 — Verify legacy writes now fail
-
-In the browser console on the live site, signed in:
+**Verify legacy writes now fail.** In the browser console on the live site,
+signed in, attempt the legacy mutation against a post:
 
 ```js
-// Should be rejected with permission-denied.
+// Expect: FirebaseError: Missing or insufficient permissions.
 const { doc, updateDoc, increment, arrayUnion } = await import(
   'https://www.gstatic.com/firebasejs/12.11.0/firebase-firestore.js');
 await updateDoc(doc(window.__db, 'posts', '<a post id>'), {
@@ -285,91 +412,137 @@ await updateDoc(doc(window.__db, 'posts', '<a post id>'), {
 });
 ```
 
-**Good:** `FirebaseError: Missing or insufficient permissions.`
-**Bad:** it succeeds — you are still on the transitional rules. Re-run step 11.
+Then confirm the app is unaffected: like and unlike through the UI.
 
-Then confirm the app itself is unaffected: like and unlike a post through the
-UI. **Good:** both work.
+**Expected result** — the console attempt is rejected; the UI like/unlike
+round-trip works.
 
-### Step 13 — Remove the transitional code
+**STOP if**
+- The console attempt **succeeds** → you are still on transitional rules.
+  Re-run the deploy.
+- UI likes fail → someone is still on an old bundle. → **R5**
+
+**Rollback route** — **R5**.
+
+---
+
+## Phase I — Transitional-code cleanup
 
 Not now. Follow [transition-cleanup.md](transition-cleanup.md), which lists
-every artifact and the criteria for deleting it.
+every temporary artifact, the five criteria for removing it, and the order —
+the `likedBy` data goes last because it is the only irreversible step.
 
 ---
 
 ## Rollback
 
-### Decision table
+For each path: the CLI command where a reliable one exists, the provider UI
+action where it does not, and the verification that proves it worked.
 
-| Symptom | Stage | Action |
+| Symptom | Phase | Route |
 | --- | --- | --- |
-| Legacy client cannot like | after step 5 | **R1** — transitional rules are wrong |
-| New client broken, old still live | after step 8 | **R2** — roll back hosting |
-| Backend erroring / feed down | after step 7 | **R3** — roll back the web service |
-| Analysis not running | after step 7 | **R4** — worker only, not urgent |
-| Likes fail after strict cutover | after step 11 | **R5** — reopen the window |
-| Migration half-done | step 2 interrupted | **R6** — re-run it |
+| Legacy client cannot like | D | **R1** |
+| New client broken | E | **R2** |
+| Backend erroring / 5xx | E | **R3** |
+| Analysis not running | E | **R4** |
+| Likes fail after strict cutover | H | **R5** |
+| Migration interrupted / partial | C, D, G | **R6** |
 
 ### R1 — Transitional rules behave incorrectly
 
-```bash
-# Fastest: Firebase console -> Firestore -> Rules -> History -> previous version
-# -> Rollback. Instant, no build.
-```
+**No reliable CLI rollback.** The Firebase CLI can deploy a rules file but
+cannot roll back to a previously published version; `firestore:databases:restore`
+restores *data*, not rules.
 
-Then diagnose locally — never on production:
+**Provider UI:** Firebase console → Firestore Database → **Rules** → **History**
+→ select the version **immediately below** the one timestamped at your Phase D
+deploy → **Rollback**.
+
+*Confirming you picked the right one:* the console shows each version's publish
+time and a diff. The correct target is the last version whose source does
+**not** contain `FITFEED_TRANSITIONAL_RULES`. Check the diff before confirming.
+
+**CLI alternative** (cleaner, and preferred if the repo is to hand):
 
 ```bash
 cd fit-feed
+git stash                                  # if you have local edits
+npm run deploy:rules:strict                # republish the known-good strict file
+```
+
+**Verify:** console → Rules → the active version no longer contains
+`FITFEED_TRANSITIONAL_RULES`. Then re-test a like on a current client.
+
+**Safe?** Yes — no data changed. Rules are pure policy.
+
+Diagnose locally, never on production:
+
+```bash
 npm run rehearse:migration
 npx firebase emulators:exec --only firestore,storage --project fitfeed-rules-test \
   "npx vitest run tests/rules/transition.rules.test.ts"
 ```
 
-**Safe.** No data has changed; rules are pure policy.
-
 ### R2 — The new client breaks
 
-```
-Firebase console -> Hosting -> Release history -> previous release -> Rollback
-```
+**No reliable CLI rollback.** `firebase hosting:rollback` does not exist in
+this CLI version.
 
-Instant and needs no rebuild.
+**Provider UI:** Firebase console → **Hosting** → **Release history** → the
+release immediately **before** your Phase E deploy → **⋮** → **Rollback**.
 
-**Is rolling the client back safe once new like documents exist?** **Yes**, as
-long as the transitional rules are still deployed — which at this stage they
-are. The old client reads and writes `likedBy`, which was never deleted, so it
-keeps working. Like documents created by the new client are simply invisible
-to it.
+*Confirming you picked the right one:* releases are listed with timestamp and
+the deploying user. The correct target is the newest release *older* than your
+Phase E hosting deploy. After rolling back, hard-reload the site and check the
+bundle hash in DevTools → Network differs from the one you just shipped.
 
-The cost is a **split brain for the duration**: a like made on the new client
-lives only in the subcollection, and a like made afterwards on the old client
-lives only in the array. Both are preserved; neither is lost. Re-running
-`migrate_likes.py --apply` after you roll forward again reconciles the array
-side into the subcollection, and `reconcile_likes.py --apply` realigns
-`likesCount`.
+**Verify:** the site loads; a like works; `/rank` fallback warnings appear in
+the browser console (expected — that is the old client on the new backend).
 
-**Do not roll the client back after step 11 without first redeploying the
-transitional rules** — the old client cannot write `likedBy` under strict
-rules and its like button will fail. Order: rules first, then hosting.
+**Is rolling back safe once new like documents exist?** **Yes, while the
+transitional rules are live.** The old client reads and writes `likedBy`,
+which was never deleted, so it keeps working. Like documents created by the
+new client are simply invisible to it.
+
+The cost is a **split brain**: a like made on the new client lives only in the
+subcollection; one made afterwards on the old client lives only in the array.
+Both are preserved, neither is lost. Re-running `migrate_likes.py --apply`
+after rolling forward reconciles the array side, and the watermark ensures it
+does not resurrect anything removed in between.
+
+**After Phase H, deploy transitional rules BEFORE rolling back the client** —
+the old client cannot write `likedBy` under strict rules. Order: **R5**, then
+**R2**.
 
 ### R3 — The API breaks
 
-```
-Railway -> web service -> Deployments -> previous -> Redeploy
+**Provider UI:** Railway → **web** service → **Deployments** → the deployment
+immediately before your Phase E deploy → **⋮** → **Redeploy**.
+
+*Confirming you picked the right one:* Railway lists each deployment with its
+commit SHA. The correct target is the one whose SHA is **not** on
+`fitfeed-production-hardening` — i.e. the last deploy from `main`.
+
+**Verify:**
+
+```bash
+curl -s https://<api-host>/health                                   # {"status":"ok"}
+curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<api-host>/rank
+# 200 = the OLD backend is back
 ```
 
-Stateless. Safe at any point.
+**Safe?** Yes. The API is stateless.
 
 ### R4 — The worker misbehaves
 
-```
-Railway -> worker service -> Stop
-```
+**Provider UI:** Railway → **worker** service → **Settings** → **Remove**, or
+scale to zero replicas.
 
-Jobs stay queued and drain when it returns. Nothing is lost; analysis is
-delayed. Never urgent enough to justify rushing another step.
+**Verify:** Firestore → `analysisJobs` → jobs remain at `queued` and stop
+transitioning. Nothing is lost; analysis is delayed.
+
+**Safe?** Yes. Leases expire and jobs drain when it returns. Never urgent
+enough to justify rushing another phase.
 
 ### R5 — Likes fail after the strict cutover
 
@@ -380,56 +553,137 @@ cd fit-feed
 npm run deploy:rules:transition
 ```
 
-Reopens the legacy path in one command. Wait longer, re-verify, then retry
-step 11.
+**Verify:** console → Rules → the active version contains
+`FITFEED_TRANSITIONAL_RULES`; a legacy like succeeds again from an old client.
+
+Wait longer, re-verify, then retry Phase H.
 
 ### R6 — A partially completed migration
 
-`migrate_likes.py` is idempotent and additive: it only ever *creates* like
-documents that are missing and realigns counts. An interrupted run leaves a
-partially backfilled but entirely consistent state.
+`migrate_likes.py` is idempotent and additive: it only *creates* like
+documents that are missing and realigns counts to the document count. An
+interrupted run leaves a partially backfilled but entirely consistent state.
 
 ```bash
+cd fit-feed/python-backend
 python migrate_likes.py --apply     # resumes; skips what already exists
 python migrate_likes.py --verify    # must be clean before continuing
 ```
 
-There is no "undo" and none is needed — the migration adds data, and the
-legacy array it was derived from is untouched.
+**Verify:** `VERIFY OK`.
 
-### What must never be deleted during a rollback
+There is no "undo" and none is needed — the migration adds data, and the
+legacy array it derives from is untouched. If you genuinely need to remove the
+backfilled documents, they are exactly the ones in `likedByMigrated`, and the
+Phase B backup is the reference.
+
+### What must never be deleted during any rollback
 
 | Never delete | Why |
 | --- | --- |
-| `likedBy` on post documents | The only record of a legacy like, and the entire rollback path for the old client. |
-| `posts/*/likes/*` documents | The only record of likes made through the new client. Deleting them loses real user actions. |
-| `firestore.transition.rules` | The one-command fix for R1 and R5. |
-| `userTasteState/*` | Monotonic. Deleting it makes a stale cached taste vector look fresh. |
-| `analysisJobs/*` | Carries the attempt budget. Deleting re-arms paid work. |
-| Firebase Hosting release history | R2 depends on it. |
+| `likedBy` on post documents | The only record of a legacy like, and the whole rollback path for the old client |
+| `likedByMigrated` | Without it, a migration rerun resurrects every intentionally removed like |
+| `posts/*/likes/*` | The only record of likes made through the new client |
+| `firestore.transition.rules` | The one-command fix for R1 and R5 |
+| `userTasteState/*` | Monotonic; deleting makes a stale cached vector look fresh |
+| `analysisJobs/*` | Carries the attempt budget; deleting re-arms paid work |
+| The Phase B backup | Obviously |
+| Firebase Hosting release history | R2 depends on it |
 
-Safe to delete during rollback: **nothing**. Every rollback path here is a
-redeploy or a re-run, not a deletion.
+Safe to delete during rollback: **nothing**. Every route here is a redeploy or
+a re-run.
+
+---
+
+## Like architecture reference
+
+### Legacy schema (currently in production)
+
+```
+posts/{postId}
+  likesCount: number          denormalised counter
+  likedBy:    string[]        every liker's uid, unbounded
+```
+
+One write toggles both:
+`{ likesCount: increment(±1), likedBy: arrayUnion/arrayRemove(uid) }`.
+
+### New schema
+
+```
+posts/{postId}
+  likesCount:       number    unchanged
+  likedByMigrated:  string[]  migration watermark, server-owned, temporary
+
+posts/{postId}/likes/{uid}
+  uid:       string
+  createdAt: string
+```
+
+### The questions that decide the rollout
+
+| Question | Answer |
+| --- | --- |
+| Is `likedBy` migrated? | **Yes** — `migrate_likes.py --apply`. |
+| Is it dual-read? | **No.** The subcollection is the only source of truth. A fallback would be permanently wrong: no client can write `likedBy`, so an unliked-after-migration post would show as liked forever. |
+| Is it deleted? | **No.** Retained as the rollback path; retired in Phase I. |
+| Source of truth for "did I like this?" | `posts/{postId}/likes/{uid}` exists. Backend `attach_liked_by_me`; client `hasLiked` / `getLikedPostIds`. |
+| Source of truth for `likesCount` | The counter, kept honest by the rules. The like documents are the recount authority when they disagree. |
+| Simultaneous likes | Independent documents, independent `increment()`. Both land. |
+| Double-click | The transaction reads the like document first, so it toggles rather than stacking. |
+| Offline / retry | A Firestore transaction; a retry re-reads and re-decides. Idempotent. |
+| Can counts drift? | Narrowly — the rules permit deleting a like document without decrementing. `reconcile_likes.py` realigns. |
+| Post deletion cleanup | Incomplete by design: Firestore does not cascade-delete subcollections and an author cannot delete others' likes. `reconcile_likes.py` sweeps orphans. |
+| User deletion cleanup | Not implemented; no account-deletion flow exists. Tracked in transition-cleanup.md. |
+| When can `isLegacyLikeToggle()` go? | See [transition-cleanup.md](transition-cleanup.md) — four conditions. |
+
+### Reconciliation cadence
+
+`reconcile_likes.py` is **run manually on a defined cadence**, not scheduled.
+
+Automating it would need either a Railway cron service (another deployable,
+another copy of the service-account credentials, for a job that writes to
+every post) or a Cloud Function (a new deployment target this project does not
+otherwise use). Both add standing infrastructure and a standing credential to
+fix drift that, by construction, only arises from a console user or a
+partially applied legacy write — neither of which happens on a schedule.
+
+**The cadence:**
+
+| When | Command | Expect |
+| --- | --- | --- |
+| Daily during Phase F | `python reconcile_likes.py` | `drifted=0`, `orphaned=0` |
+| Phase G | `python reconcile_likes.py --apply` | Clean afterwards |
+| Monthly thereafter | `python reconcile_likes.py` | `drifted=0`; apply if not |
+| After any bulk post deletion | `python reconcile_likes.py --apply` | Orphans swept |
+
+This is a checklist item in [transition-cleanup.md](transition-cleanup.md) so
+it has an owner rather than living only here. Revisit automation if drift is
+ever observed outside a migration window — that would mean a real source
+exists and is worth instrumenting.
 
 ---
 
 ## Quick reference
 
 ```bash
-# Rehearse everything locally, against emulators only
-npm run rehearse:migration
+npm run rehearse:migration                  # rehearse everything, emulators only
 
-# Migration
-python migrate_likes.py                  # dry run
+npm run backup:firestore -- --out ../backups/DATE-pre-migration
+npm run backup:verify    -- ../backups/DATE-pre-migration
+
+cd python-backend
+python migrate_likes.py                     # dry run
 python migrate_likes.py --apply
 python migrate_likes.py --verify
+python migrate_likes.py --apply --prune-stale   # only if STALE was reported
 
-# Integrity
-python reconcile_likes.py                # dry run: drift + orphaned likes
+python reconcile_likes.py                   # dry run: drift + orphans
 python reconcile_likes.py --apply
 
-# Rules
+cd ..
 npm run deploy:rules:transition
 npm run deploy:rules:strict
-npm run rules:check                      # generated file still in sync?
+npm run rules:check                         # generated file still in sync?
+npm run smoke:production -- --api https://<api-host> --site https://<site-host>
 ```

@@ -13,6 +13,20 @@ single change.
 
 ---
 
+## Standing operational tasks (these outlive the cleanup)
+
+Two things do **not** get deleted with the transitional path. They are listed
+here because this is the document with an owner.
+
+- [ ] **Reconciliation cadence.** `python reconcile_likes.py` monthly, and
+      after any bulk post deletion. Dry run first; `--apply` if it reports
+      anything. Deliberately not scheduled — see the reasoning in
+      [production-rollout.md](production-rollout.md#reconciliation-cadence).
+      Revisit automation only if drift is observed outside a migration window.
+- [ ] **Account deletion.** No flow exists. If one is added it must remove
+      `posts/*/likes/{uid}`, `users/{uid}/**`, `saves/{uid}_*`,
+      `follows/{uid}_*` and `userTasteState/{uid}`.
+
 ## Do not start until all five hold
 
 - [ ] **Strict rules are live.** Step 11 of
@@ -94,6 +108,16 @@ nothing outside `docs/`.
 *Criteria:* all five conditions, **plus** item 7 below — the field must be
 gone from the data before it is gone from the type.
 
+### 6b. The `likedByMigrated` watermark
+
+The migration watermark. It exists only to tell a tail-window legacy like
+apart from an intentionally removed one, which stops mattering once `likedBy`
+is gone.
+
+*Criteria:* delete it **in the same change as** `likedBy`, item 7 — never
+before. While `likedBy` exists, a migration rerun without the watermark would
+resurrect every like a user removed after cutover.
+
 ### 7. The `likedBy` data itself
 
 The last thing to go, and the only irreversible one.
@@ -138,7 +162,7 @@ The order matters — several items break the ones above them if done first.
 
 ```
 1. Confirm all five criteria
-2. Delete the likedBy DATA          (item 7, after an export)
+2. Delete likedBy AND likedByMigrated together  (items 7 + 6b, after an export)
 3. Remove client/rules likedBy handling  (item 6, rule before client)
 4. Delete the transitional rules file    (item 1)
 5. Delete the generator, config, CI step, npm scripts  (items 2, 3, 4)
