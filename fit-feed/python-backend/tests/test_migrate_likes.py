@@ -14,7 +14,6 @@ exists to tell them apart, and most of this file is about proving it does.
 from __future__ import annotations
 
 import os
-import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
