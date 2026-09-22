@@ -1,11 +1,36 @@
-Flask==3.0.0
-flask-cors==4.0.0
-Werkzeug==3.0.1
-anthropic
-python-dotenv
-Pillow
-scikit-learn
-numpy
-requests
-firebase-admin
-gunicorn
+# Runtime dependencies for both Railway processes (web and worker).
+#
+# Direct dependencies are pinned exactly. Transitive ones are not locked with
+# hashes on purpose: the wheels resolved on Windows during development are not
+# the wheels Railway resolves on Linux, and a cross-platform hash lock would
+# fail the build rather than make it reproducible. Exact pins on what we
+# actually import give reproducible behaviour without that breakage.
+#
+# Python 3.12 or newer (see .python-version). Nothing here uses syntax newer
+# than 3.10; 3.12 is the tested and deployed floor.
+
+# --- web framework -----------------------------------------------------------
+# Pinned to patched releases. pip-audit in CI reported 24 advisories against
+# the previous pins (Flask 3.0.0, Werkzeug 3.0.1, flask-cors 4.0.0); these are
+# the lowest versions that clear all of them. flask-cors crosses a major
+# version because PYSEC-2026-1383/1384/1385 have no fix below 6.0.0, and
+# leaving known CVEs in the CORS layer of a production dependency is not a
+# trade worth making. The call site uses only origins/allow_headers/methods/
+# max_age, which are unchanged in 6.x.
+Flask==3.1.3
+Werkzeug==3.1.6
+flask-cors==6.0.0
+gunicorn==26.2.0
+
+# --- Firebase / Firestore ----------------------------------------------------
+firebase-admin==7.6.0
+
+# --- outfit analysis ---------------------------------------------------------
+anthropic==1.7.0
+Pillow==12.3.0
+scikit-learn==1.9.1        # KMeans, for palette extraction
+numpy==2.5.3               # required by scikit-learn; also used directly
+
+# --- misc --------------------------------------------------------------------
+requests==2.34.2           # trusted-host image fetch
+python-dotenv==1.2.3

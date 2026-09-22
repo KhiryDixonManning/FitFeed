@@ -1,53 +1,20 @@
-import { getPosts, getUserPreferences, saveUserPreferences, getFollowingIds } from "./FirebaseDB";
-import { PYTHON_API } from './config';
+import { getPosts, getUserPreferences, saveUserPreferences, type Post } from "./FirebaseDB";
+import { apiFetch } from "./api";
 
-export const getRankedFeed = async (uid: string): Promise<any[]> => {
-    const [posts, userPreferences] = await Promise.all([
-        getPosts(),
-        getUserPreferences(uid),
-    ]);
+// Ranked and following feeds now come from the server-trusted POST /feed
+// endpoint (see feedApi.ts). The client-side getRankedFeed/getFollowingFeed
+// helpers that used to fetch every post and rank them were removed once the
+// feed migrated; only trending (used by the leaderboard) remains here.
 
-    try {
-        const response = await fetch(`${PYTHON_API}/rank`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ posts, userPreferences }),
-        });
-
-        if (!response.ok) throw new Error("API error");
-        return await response.json();
-    } catch (error) {
-        console.warn("Python API unavailable, falling back to unranked feed:", error);
-        return posts;
-    }
-};
-
-export const getTrendingFeed = async (): Promise<any[]> => {
+export const getTrendingFeed = async (): Promise<Post[]> => {
     const posts = await getPosts();
 
     try {
-        const response = await fetch(`${PYTHON_API}/trending`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ posts }),
-        });
-
-        if (!response.ok) throw new Error("API error");
-        return await response.json();
+        const trending = await apiFetch<Post[]>("/trending", { body: { posts } });
+        return Array.isArray(trending) ? trending : posts;
     } catch (error) {
-        console.warn("Python API unavailable:", error);
+        console.warn("Trending API unavailable, falling back to unsorted posts:", error);
         return posts;
-    }
-};
-
-export const getFollowingFeed = async (uid: string): Promise<any[]> => {
-    try {
-        const followingIds = await getFollowingIds(uid);
-        if (followingIds.length === 0) return [];
-        const allPosts = await getPosts();
-        return allPosts.filter(post => followingIds.includes(post.authorId));
-    } catch {
-        return [];
     }
 };
 

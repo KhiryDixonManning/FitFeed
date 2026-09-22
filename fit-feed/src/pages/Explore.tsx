@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { getPosts, type Post } from '../FirebaseDB';
 import PostImage from '../components/PostImage';
+import { normalizeColor } from '../utils/color';
 import EmptyState from '../components/EmptyState';
 import { GridTileSkeleton } from '../components/Skeletons';
 
@@ -26,10 +27,10 @@ export default function Explore() {
         );
       } else if (color) {
         filtered = all.filter(p =>
-          p.palette?.some((c: any) => {
-            const colorObj = typeof c === 'string' ? { name: c, hex: c } : c;
-            return colorObj.name?.toLowerCase().includes(color.toLowerCase()) ||
-                   colorObj.hex?.toLowerCase() === color.toLowerCase();
+          p.palette?.some(c => {
+            const { name, hex } = normalizeColor(c);
+            return name.toLowerCase().includes(color.toLowerCase()) ||
+                   hex.toLowerCase() === color.toLowerCase();
           })
         );
       } else if (category) {

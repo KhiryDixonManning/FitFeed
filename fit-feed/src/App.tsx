@@ -1,8 +1,8 @@
 import { useEffect, useState, lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { onAuthStateChanged, type User } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
-import { auth, db } from '../firebase';
+import { auth } from '../firebase';
+import { upsertOwnProfile } from './profileService';
 import Feed from './pages/Feed';
 import Upload from './pages/Upload';
 import Profile from './pages/Profile';
@@ -28,12 +28,7 @@ export default function App() {
       setUser(firebaseUser);
       setLoading(false);
       if (firebaseUser) {
-        setDoc(doc(db, 'users', firebaseUser.uid), {
-          uid: firebaseUser.uid,
-          email: firebaseUser.email,
-          displayName: firebaseUser.displayName || '',
-          createdAt: new Date().toISOString(),
-        }, { merge: true }).catch(console.error);
+        upsertOwnProfile(firebaseUser).catch(console.error);
       }
     });
     return unsubscribe;

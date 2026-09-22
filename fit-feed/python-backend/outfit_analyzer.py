@@ -1,113 +1,45 @@
 # outfit_analyzer.py
+"""Outfit analysis: local colour extraction plus Claude multimodal analysis.
 
-import os
+The analyser is handed raw image bytes that the caller has already fetched
+through image_fetch (trusted host, size- and content-checked). Model output is
+run through validation.validate_analysis_output before it is returned, so a
+malformed or surprising response degrades to the locally computed palette
+instead of writing junk into Firestore.
+"""
+
+from __future__ import annotations
+
 import base64
 import json
-import requests
-import numpy as np
-import anthropic
-from PIL import Image
-from sklearn.cluster import KMeans
+import logging
+import os
 from io import BytesIO
 from pathlib import Path
+
+import anthropic
+import numpy as np
 from dotenv import load_dotenv
+from PIL import Image
+from sklearn.cluster import KMeans
+
+from validation import validate_analysis_output
+
+log = logging.getLogger(__name__)
 
 _here = Path(__file__).resolve().parent
-_env_path = _here / ".env"
-print(f"[dotenv] Looking for .env at: {_env_path}")
-print(f"[dotenv] File exists: {_env_path.exists()}")
-load_dotenv(dotenv_path=_env_path, override=True)
-
-api_key = os.getenv("ANTHROPIC_API_KEY")
-if not api_key:
-    print("WARNING: ANTHROPIC_API_KEY is not set — Claude analysis will fail")
-else:
-    print(f"ANTHROPIC_API_KEY loaded: {api_key[:8]}...")
+load_dotenv(dotenv_path=_here / ".env", override=False)
 
 # Dateless model IDs (4.6 generation onward) are pinned snapshots and can be
-# retired eventually — if analysis starts failing with a model 404, check
+# retired eventually - if analysis starts failing with a model 404, check
 # https://platform.claude.com/docs/en/about-claude/models/overview
 CLAUDE_MODEL = "claude-sonnet-5"
 
+# Presence only - never log any part of the key itself.
+if not os.getenv("ANTHROPIC_API_KEY"):
+    log.warning("ANTHROPIC_API_KEY is not configured; Claude analysis will be skipped")
 
-def extract_color_palette_from_bytes(image_bytes: bytes, n_colors: int = 5) -> list:
-    """
-    Extracts dominant colors from raw image bytes using KMeans clustering.
-    Crops to center 60% of the image to focus on the outfit, not background.
-    Returns list of hex color strings.
-    Falls back to empty list on any error.
-    """
-    try:
-        img = Image.open(BytesIO(image_bytes)).convert("RGB")
-
-        # Crop to center 60% of image to focus on outfit, not background
-        width, height = img.size
-        left = int(width * 0.2)
-        top = int(height * 0.1)
-        right = int(width * 0.8)
-        bottom = int(height * 0.9)
-        img = img.crop((left, top, right, bottom))
-
-        img = img.resize((150, 150))
-        pixels = np.array(img).reshape(-1, 3)
-
-        kmeans = KMeans(n_clusters=n_colors, random_state=42, n_init=10)
-        kmeans.fit(pixels)
-
-        colors = []
-        for center in kmeans.cluster_centers_:
-            r, g, b = [int(c) for c in center]
-            hex_color = "#{:02x}{:02x}{:02x}".format(r, g, b)
-            colors.append(hex_color)
-
-        return colors
-    except Exception as e:
-        print(f"Color extraction failed: {e}")
-        return []
-
-
-def analyze_outfit_with_claude_bytes(image_bytes: bytes) -> dict:
-    """
-    Sends raw image bytes to Claude API as base64.
-    Resizes and compresses before sending to reduce payload size.
-    Returns structured metadata dict. Falls back to empty dict on any error.
-    """
-    try:
-        # Resize and compress before sending to Claude
-        img = Image.open(BytesIO(image_bytes)).convert("RGB")
-        max_size = 1024
-        ratio = min(max_size / img.width, max_size / img.height, 1.0)
-        if ratio < 1.0:
-            new_size = (int(img.width * ratio), int(img.height * ratio))
-            img = img.resize(new_size, Image.LANCZOS)
-
-        buffer = BytesIO()
-        img.save(buffer, format="JPEG", quality=85)
-        buffer.seek(0)
-        image_data = base64.standard_b64encode(buffer.read()).decode("utf-8")
-        media_type = "image/jpeg"
-
-        print(f"[claude] Image prepared, base64 size: {len(image_data)} chars")
-
-        client = anthropic.Anthropic()
-        message = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=1024,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": media_type,
-                                "data": image_data,
-                            },
-                        },
-                        {
-                            "type": "text",
-                            "text": """Analyze this outfit photo. Return ONLY a valid JSON object with no extra text, no markdown, no backticks, no explanation. Use exactly this structure:
+ANALYSIS_PROMPT = """Analyze this outfit photo. Return ONLY a valid JSON object with no extra text, no markdown, no backticks, no explanation. Use exactly this structure:
 {
   "aesthetic": "one of: streetwear, vintage, y2k, minimalist, cottagecore, preppy, western, alternative, athleisure, business casual, gorpcore, dark academia, other",
   "aestheticTags": ["tag1", "tag2", "tag3"],
@@ -129,46 +61,119 @@ def analyze_outfit_with_claude_bytes(image_bytes: bytes) -> dict:
   ]
 }
 For colors: analyze ONLY the clothing and accessories being worn. Ignore background walls, floors, mirrors, furniture, shelving, other people, and any objects not being worn by the subject. Provide exactly 3 dominant colors from the OUTFIT ITSELF with a creative fashion-forward name (like Metropolis, Ivory, Slate, Rust, Sage, Camel, Cobalt, Onyx — not just basic color names), the hex code, and the percentage of the OUTFIT that color occupies."""
-                        }
-                    ],
-                }
-            ],
+
+
+def extract_color_palette_from_bytes(image_bytes: bytes, n_colors: int = 5) -> list:
+    """Dominant colours via KMeans over the centre crop. Never raises."""
+    try:
+        img = Image.open(BytesIO(image_bytes)).convert("RGB")
+
+        # Crop to the centre so background walls/floors matter less.
+        width, height = img.size
+        img = img.crop((int(width * 0.2), int(height * 0.1), int(width * 0.8), int(height * 0.9)))
+        img = img.resize((150, 150))
+        pixels = np.array(img).reshape(-1, 3)
+
+        kmeans = KMeans(n_clusters=n_colors, random_state=42, n_init=10)
+        kmeans.fit(pixels)
+
+        return [
+            "#{:02x}{:02x}{:02x}".format(*[int(c) for c in center])
+            for center in kmeans.cluster_centers_
+        ]
+    except Exception:
+        log.exception("Local colour extraction failed")
+        return []
+
+
+def _extract_json(raw_text: str) -> str:
+    """Strip markdown fences the model may add despite instructions."""
+    text = raw_text.strip()
+    if text.startswith("```"):
+        parts = text.split("```")
+        if len(parts) >= 2:
+            text = parts[1]
+            if text.startswith("json"):
+                text = text[4:]
+    return text.strip()
+
+
+def analyze_outfit_with_claude_bytes(image_bytes: bytes) -> dict:
+    """Send the image to Claude and return validated analysis fields.
+
+    Returns {} on any failure so the caller can fall back cleanly.
+    """
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        log.warning("Skipping Claude analysis: no API key configured")
+        return {}
+
+    try:
+        img = Image.open(BytesIO(image_bytes)).convert("RGB")
+        max_size = 1024
+        ratio = min(max_size / img.width, max_size / img.height, 1.0)
+        if ratio < 1.0:
+            img = img.resize((int(img.width * ratio), int(img.height * ratio)), Image.LANCZOS)
+
+        buffer = BytesIO()
+        img.save(buffer, format="JPEG", quality=85)
+        buffer.seek(0)
+        image_data = base64.standard_b64encode(buffer.read()).decode("utf-8")
+
+        client = anthropic.Anthropic()
+        message = client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=1024,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": "image/jpeg", "data": image_data},
+                    },
+                    {"type": "text", "text": ANALYSIS_PROMPT},
+                ],
+            }],
         )
 
-        raw = message.content[0].text.strip()
-        # Strip markdown code fences if Claude wrapped the JSON despite instructions
-        if raw.startswith("```"):
-            raw = raw.split("```", 2)[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-            raw = raw.rsplit("```", 1)[0].strip()
-        print(f"[claude] Raw response: {raw}")
-        return json.loads(raw)
+        raw = _extract_json(message.content[0].text)
+        parsed = json.loads(raw)
 
-    except anthropic.NotFoundError as e:
-        # A 404 from the Messages API means the model ID no longer exists.
+        # Model output is untrusted input: coerce it into the known schema.
+        validated = validate_analysis_output(parsed)
+        if validated is None:
+            log.warning("Claude response contained no usable fields after validation")
+            return {}
+
+        log.info(
+            "Claude analysis ok: aesthetic=%s tags=%d items=%d colors=%d",
+            validated.get("aesthetic"),
+            len(validated.get("aestheticTags", [])),
+            len(validated.get("detectedItems", [])),
+            len(validated.get("colors", [])),
+        )
+        return validated
+
+    except anthropic.NotFoundError as exc:
+        # A 404 from the Messages API means the model id no longer exists.
         # This exact failure mode silently broke analysis once (retired
-        # claude-sonnet-4-20250514) — make it unmissable in the logs.
-        print(f"MODEL RETIRED OR INVALID: {CLAUDE_MODEL} — update CLAUDE_MODEL "
-              f"in outfit_analyzer.py (see /docs/en/about-claude/models/overview). "
-              f"API said: {e}")
+        # claude-sonnet-4-20250514) - make it unmissable in the logs.
+        log.error(
+            "MODEL RETIRED OR INVALID: %s - update CLAUDE_MODEL in outfit_analyzer.py "
+            "(see platform.claude.com/docs/en/about-claude/models/overview). API said: %s",
+            CLAUDE_MODEL, exc,
+        )
         return {}
-    except json.JSONDecodeError as e:
-        print(f"Claude returned invalid JSON: {e}")
+    except json.JSONDecodeError:
+        # Log that parsing failed and how much text came back, not the text.
+        log.warning("Claude returned text that is not valid JSON")
         return {}
-    except Exception as e:
-        print(f"Claude analysis failed: {e}")
+    except Exception:
+        log.exception("Claude analysis failed")
         return {}
 
 
-def analyze_post(image_url: str) -> dict:
-    """
-    Main entry point. Downloads image ONCE and reuses bytes for both
-    KMeans color extraction (fallback) and Claude analysis.
-    Always returns a dict. Never raises an exception.
-    """
-    print(f"[analyze_post] Starting analysis for: {image_url}")
-
+def analyze_image_bytes(image_bytes: bytes) -> dict:
+    """Analyse already-fetched image bytes. Always returns a result dict."""
     result = {
         "palette": [],
         "aesthetic": None,
@@ -181,45 +186,22 @@ def analyze_post(image_url: str) -> dict:
         "analyzed": False,
     }
 
-    try:
-        # Download image ONCE and reuse for both KMeans and Claude
-        print("[analyze_post] Downloading image...")
-        img_response = requests.get(image_url, timeout=10, headers={
-            'User-Agent': 'Mozilla/5.0'
-        })
-        img_response.raise_for_status()
-        image_bytes = img_response.content
-        print(f"[analyze_post] Image downloaded: {len(image_bytes)} bytes")
+    kmeans_palette = extract_color_palette_from_bytes(image_bytes)
+    claude_result = analyze_outfit_with_claude_bytes(image_bytes)
 
-        # Run KMeans on downloaded bytes as fallback palette
-        print("[analyze_post] Extracting KMeans palette...")
-        kmeans_palette = extract_color_palette_from_bytes(image_bytes)
-        print(f"[analyze_post] KMeans palette: {kmeans_palette}")
-
-        # Run Claude analysis using the same downloaded bytes
-        print("[analyze_post] Calling Claude API...")
-        claude_result = analyze_outfit_with_claude_bytes(image_bytes)
-        print(f"[analyze_post] Claude result: {claude_result}")
-
-        if claude_result:
-            # Use Claude colors if available (richer format with names and percentages)
-            # Fall back to KMeans palette if Claude didn't return colors
-            result["palette"] = claude_result.get("colors", kmeans_palette)
-            result["aesthetic"] = claude_result.get("aesthetic")
-            result["outfitName"] = claude_result.get("outfitName")
-            result["aestheticTags"] = claude_result.get("aestheticTags", [])
-            result["detectedItems"] = claude_result.get("detectedItems", [])
-            result["styleDescription"] = claude_result.get("styleDescription")
-            result["styleNotes"] = claude_result.get("styleNotes")
-            result["aestheticScores"] = claude_result.get("aestheticScores", {})
-            result["analyzed"] = True
-            print("[analyze_post] Analysis complete and analyzed=True")
-        else:
-            # Fall back to KMeans palette only
-            result["palette"] = kmeans_palette
-            print("[analyze_post] Claude failed, using KMeans palette only")
-
-    except Exception as e:
-        print(f"[analyze_post] FAILED: {e}")
+    if claude_result:
+        # Prefer Claude's named colours; fall back to the KMeans hex list.
+        result["palette"] = claude_result.get("colors") or kmeans_palette
+        result["aesthetic"] = claude_result.get("aesthetic")
+        result["outfitName"] = claude_result.get("outfitName")
+        result["aestheticTags"] = claude_result.get("aestheticTags", [])
+        result["detectedItems"] = claude_result.get("detectedItems", [])
+        result["styleDescription"] = claude_result.get("styleDescription")
+        result["styleNotes"] = claude_result.get("styleNotes")
+        result["aestheticScores"] = claude_result.get("aestheticScores", {})
+        result["analyzed"] = True
+    else:
+        result["palette"] = kmeans_palette
+        log.info("Falling back to locally extracted palette only")
 
     return result

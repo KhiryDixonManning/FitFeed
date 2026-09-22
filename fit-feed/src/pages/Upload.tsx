@@ -1,62 +1,21 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { doc, updateDoc } from 'firebase/firestore';
-import { db } from '../../firebase';
 import { addPost } from '../FirebaseDB';
-import { CATEGORIES } from '../constants/categories';
-import { PYTHON_API } from '../config';
+import { CATEGORIES, type Category } from '../constants/categories';
+import { requestAnalysis } from '../api';
+import { compressToJpegFile, isAcceptedImage } from '../utils/image';
 
-// Best-effort status write so the detail page can be honest about a
-// failed/never-finished analysis instead of shimmering forever.
-async function markAnalysisFailed(postId: string): Promise<void> {
+// Ask the backend to analyse the new post. The browser no longer receives or
+// writes the analysis itself: the server authenticates the caller, reads the
+// image URL from Firestore, runs the model and writes the result with the
+// Admin SDK. A failure here is not fatal - PostDetail shows an honest waiting
+// state and the server records analysisStatus.
+async function triggerAnalysis(postId: string): Promise<void> {
   try {
-    await updateDoc(doc(db, 'posts', postId), { analysisStatus: 'failed' });
+    await requestAnalysis(postId);
   } catch (err) {
-    console.error('[triggerAnalysis] Could not mark failed:', err);
-  }
-}
-
-async function triggerAnalysis(postId: string, imageUrl: string): Promise<void> {
-  console.log('[triggerAnalysis] Starting for postId:', postId, 'imageUrl:', imageUrl);
-  try {
-    const response = await fetch(`${PYTHON_API}/analyze`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ imageUrl }),
-    });
-
-    console.log('[triggerAnalysis] Response status:', response.status);
-
-    if (response.ok) {
-      const analysis = await response.json();
-      console.log('[triggerAnalysis] Analysis received:', analysis);
-
-      if (analysis.analyzed) {
-        await updateDoc(doc(db, 'posts', postId), {
-          palette: analysis.palette || [],
-          aesthetic: analysis.aesthetic || null,
-          outfitName: analysis.outfitName || null,
-          aestheticTags: analysis.aestheticTags || [],
-          detectedItems: analysis.detectedItems || [],
-          styleDescription: analysis.styleDescription || null,
-          styleNotes: analysis.styleNotes || null,
-          aestheticScores: analysis.aestheticScores || {},
-          analyzed: true,
-          analysisStatus: 'complete',
-        });
-        console.log('[triggerAnalysis] Firestore updated successfully');
-      } else {
-        console.warn('[triggerAnalysis] analyzed=false, not writing analysis');
-        await markAnalysisFailed(postId);
-      }
-    } else {
-      console.error('[triggerAnalysis] Bad response from analyze endpoint:', response.status);
-      await markAnalysisFailed(postId);
-    }
-  } catch (err) {
-    console.error('[triggerAnalysis] Failed:', err);
-    await markAnalysisFailed(postId);
+    console.error('[triggerAnalysis] Request failed:', err);
   }
 }
 
@@ -76,33 +35,14 @@ export default function Upload({ uid }: UploadProps) {
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      setImage(file);
-      setPreview(URL.createObjectURL(file));
+    if (!file) return;
+    if (!isAcceptedImage(file)) {
+      setError('Please choose a JPG, PNG, WEBP or HEIC image.');
+      return;
     }
-  };
-
-  const compressImage = (file: File, maxWidth = 1200, quality = 0.8): Promise<Blob> => {
-    return new Promise((resolve) => {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d')!;
-      const img = new Image();
-      const url = URL.createObjectURL(file);
-
-      img.onload = () => {
-        const ratio = Math.min(maxWidth / img.width, maxWidth / img.height, 1);
-        canvas.width = img.width * ratio;
-        canvas.height = img.height * ratio;
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        URL.revokeObjectURL(url);
-        canvas.toBlob(
-          (blob) => resolve(blob!),
-          'image/jpeg',
-          quality
-        );
-      };
-      img.src = url;
-    });
+    setError('');
+    setImage(file);
+    setPreview(URL.createObjectURL(file));
   };
 
   const handlePublish = async () => {
@@ -115,10 +55,7 @@ export default function Upload({ uid }: UploadProps) {
 
     try {
       const storage = getStorage();
-      const compressedBlob = await compressImage(image);
-      const compressedFile = new File([compressedBlob], image.name.replace(/\.[^.]+$/, '.jpg'), {
-        type: 'image/jpeg',
-      });
+      const compressedFile = await compressToJpegFile(image);
       const storageRef = ref(storage, `posts/${uid}/${Date.now()}_${compressedFile.name}`);
       await uploadBytes(storageRef, compressedFile);
       const imageUrl = await getDownloadURL(storageRef);
@@ -127,7 +64,7 @@ export default function Upload({ uid }: UploadProps) {
         authorId: uid,
         content: caption,
         imageUrl,
-        category: category as any,
+        category: category as Category,
         outfitBreakdown,
         likesCount: 0,
         commentsCount: 0,
@@ -138,13 +75,15 @@ export default function Upload({ uid }: UploadProps) {
       if (result) {
         // Land on the new post so the analysis composes in front of the
         // author; the analyze call itself stays fire-and-forget.
-        triggerAnalysis(result.id, imageUrl);
+        triggerAnalysis(result.id);
         navigate(`/post/${result.id}`, { state: { justPublished: true } });
       } else {
         navigate('/');
       }
-    } catch (err: any) {
-      setError(err.message || 'Failed to publish. Please try again.');
+    } catch (err: unknown) {
+      setError(err instanceof Error && err.message
+        ? err.message
+        : 'Failed to publish. Please try again.');
     } finally {
       setLoading(false);
     }

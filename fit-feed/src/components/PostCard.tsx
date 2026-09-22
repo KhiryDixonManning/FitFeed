@@ -7,45 +7,9 @@ import ProfileAvatar from './ProfileAvatar';
 import PostImage from './PostImage';
 import { formatAuthor } from '../utils/formatAuthor';
 import { getRecommendationReasons } from '../utils/rankingExplanation';
-
-const hexToReadableName = (hex: string): string => {
-  if (!hex) return 'Unknown';
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  const brightness = (r * 299 + g * 587 + b * 114) / 1000;
-
-  if (r > 200 && g < 100 && b < 100) return 'Red';
-  if (r < 100 && g > 150 && b < 100) return 'Green';
-  if (r < 100 && g < 100 && b > 200) return 'Blue';
-  if (r > 200 && g > 150 && b < 100) return 'Orange';
-  if (r > 200 && g > 200 && b < 100) return 'Yellow';
-  if (r > 150 && g < 100 && b > 150) return 'Purple';
-  if (r > 180 && g < 120 && b > 120) return 'Rose';
-  if (r > 150 && g > 100 && b < 80) return 'Camel';
-  if (r < 80 && g < 80 && b < 80) return 'Black';
-  if (brightness > 220) return 'White';
-  if (brightness > 180) return 'Cream';
-  if (brightness > 150) return 'Light Gray';
-  if (brightness > 100) return 'Gray';
-  if (brightness > 50) return 'Charcoal';
-  return 'Dark';
-};
-
-const normalizeColor = (color: any): { hex: string; name: string; percentage: number | null } => {
-  if (typeof color === 'string') {
-    return {
-      hex: color,
-      name: hexToReadableName(color),
-      percentage: null,
-    };
-  }
-  return {
-    hex: color.hex || '#000000',
-    name: color.name || hexToReadableName(color.hex) || 'Unknown',
-    percentage: color.percentage ?? null,
-  };
-};
+import { normalizeColor, isLightColor } from '../utils/color';
+import { recordMoreLikeThis, recordNotInterested } from '../interactionService';
+import { usePostVisibility } from '../hooks/usePostVisibility';
 
 interface PostCardProps {
   post: Post;
@@ -59,6 +23,8 @@ interface PostCardProps {
   onToggleSave: () => void;
   saving: boolean;
   rankingFactors?: RankingFactors;
+  /** Called when the viewer asks not to see this post again. */
+  onNotInterested?: (postId: string) => void;
 }
 
 function PostCard({
@@ -73,8 +39,16 @@ function PostCard({
   onToggleSave,
   saving,
   rankingFactors,
+  onNotInterested,
 }: PostCardProps) {
   const navigate = useNavigate();
+  // Records an impression once the card has genuinely been on screen.
+  const visibilityRef = usePostVisibility(post.id);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedbackSent, setFeedbackSent] = useState<'more' | null>(null);
+  // Captured once at mount: reading the clock during render is impure,
+  // and the shimmer decision only needs to be made when the card appears.
+  const [mountedAt] = useState(() => Date.now());
   const [showComments, setShowComments] = useState(false);
   const [showWhy, setShowWhy] = useState(false);
   const whyReasons = rankingFactors ? getRecommendationReasons(rankingFactors) : null;
@@ -111,8 +85,64 @@ function PostCard({
     setSubmitting(false);
   };
 
+  const handleMoreLikeThis = async () => {
+    setShowFeedback(false);
+    setFeedbackSent('more');
+    await recordMoreLikeThis(post.id);
+  };
+
+  const handleNotInterested = async () => {
+    setShowFeedback(false);
+    await recordNotInterested(post.id);
+    onNotInterested?.(post.id);
+  };
+
   return (
-    <div className="rounded-2xl shadow-lg bg-[var(--bg-secondary)] overflow-hidden flex flex-col">
+    <div
+      ref={visibilityRef}
+      className="rounded-2xl shadow-lg bg-[var(--bg-secondary)] overflow-hidden flex flex-col relative"
+    >
+      {/* Feedback menu: one small affordance rather than two more buttons
+          competing with like/comment/save in the actions row. */}
+      <div className="absolute top-2 left-2 z-10">
+        <button
+          onClick={() => setShowFeedback(v => !v)}
+          aria-label="Feedback on this post"
+          data-testid="feedback-toggle"
+          className="bg-black/70 backdrop-blur-sm text-white rounded-full w-7 h-7 flex items-center justify-center text-sm leading-none hover:bg-black/85 transition"
+        >
+          ···
+        </button>
+        {showFeedback && (
+          <div
+            className="absolute left-0 mt-1 w-44 rounded-xl border border-[var(--border)] bg-[var(--bg)] shadow-lg overflow-hidden"
+            data-testid="feedback-menu"
+          >
+            <button
+              onClick={handleMoreLikeThis}
+              data-testid="more-like-this"
+              className="w-full text-left px-3 py-2 text-xs text-[var(--text-h)] hover:bg-[var(--accent-bg)] transition"
+            >
+              More like this
+            </button>
+            <button
+              onClick={handleNotInterested}
+              data-testid="not-interested"
+              className="w-full text-left px-3 py-2 text-xs text-[var(--text-h)] hover:bg-[var(--accent-bg)] transition border-t border-[var(--border)]"
+            >
+              Not interested
+            </button>
+          </div>
+        )}
+      </div>
+
+      {feedbackSent === 'more' && (
+        <div className="px-3 pt-3 -mb-1">
+          <span className="text-xs text-[var(--accent)]">
+            Noted — more like this in your feed
+          </span>
+        </div>
+      )}
       {/* Image — tapping navigates to post detail */}
       <div
         className="overflow-hidden cursor-pointer bg-gray-100 relative"
@@ -179,15 +209,17 @@ function PostCard({
       )}
 
       {/* Analyzing indicator — gate on the explicit analysisStatus when the
-          post has one (new posts write pending/complete/failed); legacy
-          posts without the field fall back to the freshness window so old
-          never-analyzed posts don't show a permanent "Analyzing..." lie.
-          The age cap also bounds a stuck 'pending' (client died mid-flow).
-          The palette-shaped shimmer keeps the layout stable for when the
-          real color cards arrive. */}
+          post has one; legacy posts without the field fall back to the
+          freshness window so old never-analyzed posts don't show a permanent
+          "Analyzing..." lie. Both in-flight states count: 'pending' is
+          queued for the worker, 'processing' is a worker holding it. The age
+          cap bounds a job that never got picked up. The palette-shaped
+          shimmer keeps the layout stable for the real color cards. */}
       {!post.analyzed && !post.palette?.length &&
-        (post.analysisStatus ? post.analysisStatus === 'pending' : true) &&
-        Date.now() - new Date(post.createdAt).getTime() < 10 * 60 * 1000 && (
+        (post.analysisStatus
+          ? post.analysisStatus === 'pending' || post.analysisStatus === 'processing'
+          : true) &&
+        mountedAt - new Date(post.createdAt).getTime() < 10 * 60 * 1000 && (
         <>
           <div className="flex items-center gap-1.5 px-3 mt-2">
             <div className="w-2 h-2 rounded-full bg-[var(--accent)] animate-pulse" />
@@ -208,11 +240,7 @@ function PostCard({
         <div className="flex gap-2 mt-3">
           {post.palette.map((color, i) => {
             const c = normalizeColor(color);
-            const isLight = c.hex === '#FFFFFF' || c.hex === '#ffffff' ||
-              (parseInt(c.hex.slice(1, 3), 16) > 200 &&
-               parseInt(c.hex.slice(3, 5), 16) > 200 &&
-               parseInt(c.hex.slice(5, 7), 16) > 200);
-            const textColor = isLight ? '#000000' : '#ffffff';
+            const textColor = isLightColor(c.hex) ? '#000000' : '#ffffff';
             return (
               <div
                 key={i}

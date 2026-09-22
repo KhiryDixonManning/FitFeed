@@ -28,6 +28,9 @@ screenshots/
 python-backend/venv/
 __pycache__/
 *.pyc
+.pytest_cache/
+.coverage
+htmlcov/
 
 # Firebase
 .firebase/
@@ -52,3 +55,10 @@ fit-feed/python-backend/.env
 # Playwright
 test-results/
 playwright-report/
+
+# Machine-readable test reports, written by the CI-equivalent commands and
+# consumed by scripts/assert-no-skips.mjs. Regenerated every run.
+vitest-report.json
+playwright-api.json
+playwright-ui.json
+evaluation.json

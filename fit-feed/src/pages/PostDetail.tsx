@@ -1,12 +1,16 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { db, auth } from '../../firebase';
 import { type Post, toggleLike, getComments, addComment, type Comment, deletePost, isPostSaved, savePost, unsavePost } from '../FirebaseDB';
 import { recordInteraction } from '../feedService';
 import { formatAuthor } from '../utils/formatAuthor';
 import PostImage from '../components/PostImage';
 import EmptyState from '../components/EmptyState';
+import { normalizeColor, isLightColor } from '../utils/color';
+import { getPublicProfile, getPublicProfiles, displayHandle } from '../profileService';
+import { hasLiked, getLikerIds } from '../interactionService';
+import { requestAnalysis, ApiError } from '../api';
 
 const getStoreSuggestions = (aesthetic: string) => {
   const stores: Record<string, { name: string; url: string; description: string }[]> = {
@@ -79,45 +83,6 @@ const getStoreSuggestions = (aesthetic: string) => {
   ];
 };
 
-const hexToReadableName = (hex: string): string => {
-  if (!hex) return 'Unknown';
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  const brightness = (r * 299 + g * 587 + b * 114) / 1000;
-
-  if (r > 200 && g < 100 && b < 100) return 'Red';
-  if (r < 100 && g > 150 && b < 100) return 'Green';
-  if (r < 100 && g < 100 && b > 200) return 'Blue';
-  if (r > 200 && g > 150 && b < 100) return 'Orange';
-  if (r > 200 && g > 200 && b < 100) return 'Yellow';
-  if (r > 150 && g < 100 && b > 150) return 'Purple';
-  if (r > 180 && g < 120 && b > 120) return 'Rose';
-  if (r > 150 && g > 100 && b < 80) return 'Camel';
-  if (r < 80 && g < 80 && b < 80) return 'Black';
-  if (brightness > 220) return 'White';
-  if (brightness > 180) return 'Cream';
-  if (brightness > 150) return 'Light Gray';
-  if (brightness > 100) return 'Gray';
-  if (brightness > 50) return 'Charcoal';
-  return 'Dark';
-};
-
-const normalizeColor = (color: any): { hex: string; name: string; percentage: number | null } => {
-  if (typeof color === 'string') {
-    return {
-      hex: color,
-      name: hexToReadableName(color),
-      percentage: null,
-    };
-  }
-  return {
-    hex: color.hex || '#000000',
-    name: color.name || hexToReadableName(color.hex) || 'Unknown',
-    percentage: color.percentage ?? null,
-  };
-};
-
 // Staged-reveal states for a just-published post:
 // idle      — normal visit, everything renders statically
 // waiting   — analysis in flight: shimmer where the palette will land
@@ -125,6 +90,26 @@ const normalizeColor = (color: any): { hex: string; name: string; percentage: nu
 // timeout   — took too long: honest copy, post fully usable, still listening
 // failed    — pipeline reported failure: honest copy, no shimmer
 type RevealState = 'idle' | 'waiting' | 'animating' | 'timeout' | 'failed';
+
+// Phase 9: analysis is a durable background job, so the author can be told
+// which stage their post is actually at rather than a single "analyzing"
+// blur. Readable only by the post's author (see firestore.rules).
+interface AnalysisJob {
+  status?: 'queued' | 'processing' | 'complete' | 'failed';
+  attempts?: number;
+  lastErrorCode?: string | null;
+}
+
+// What the author is shown. Derived from the job document when one is
+// readable, and from the post's own analysisStatus otherwise (a legacy post,
+// or a job document that has not been created yet).
+type AnalysisPhase =
+  | 'none' | 'queued' | 'analyzing' | 'retrying' | 'stalled' | 'failed' | 'exhausted';
+
+// A post whose analysis never even got queued (the fire-and-forget request
+// from Upload failed, or it predates the job queue) sits at 'pending'
+// forever. After this long we stop calling that "queued" and offer a retry.
+const STALLED_AFTER_MS = 5 * 60 * 1000;
 
 export default function PostDetail() {
   const { postId } = useParams<{ postId: string }>();
@@ -151,9 +136,10 @@ export default function PostDetail() {
   // FIX 2: photo zoom state
   const [zoomedImage, setZoomedImage] = useState(false);
 
+  const aesthetic = post?.aesthetic;
   const storeSuggestions = useMemo(
-    () => post?.aesthetic ? getStoreSuggestions(post.aesthetic) : [],
-    [post?.aesthetic]
+    () => (aesthetic ? getStoreSuggestions(aesthetic) : []),
+    [aesthetic]
   );
 
   // FIX 10: likers modal state
@@ -163,6 +149,16 @@ export default function PostDetail() {
 
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [job, setJob] = useState<AnalysisJob | null>(null);
+  const [jobLoaded, setJobLoaded] = useState(false);
+  // Read once at mount: the render pass stays pure, and "has this been
+  // pending too long" does not flip mid-render.
+  const [mountedAt] = useState(() => Date.now());
+  const [retrying, setRetrying] = useState(false);
+  const [retryNote, setRetryNote] = useState('');
+  // Phase 8: the viewer's like is their own document under the post, so it
+  // is read once here rather than inferred from a field on the post.
+  const [liked, setLiked] = useState(false);
 
   useEffect(() => {
     if (!postId) return;
@@ -224,34 +220,92 @@ export default function PostDetail() {
   const authorId = post?.authorId;
   useEffect(() => {
     if (!authorId) return;
-    getDoc(doc(db, 'users', authorId)).then(userSnap => {
-      if (userSnap.exists()) {
-        const userData = userSnap.data();
-        setAuthorEmail(userData.email || authorId);
-        setAuthorUsername(userData.username || '');
-        setAuthorPhotoURL(userData.photoURL || '');
-      } else {
-        setAuthorEmail(`user_${authorId.slice(0, 6)}`);
-      }
+    getPublicProfile(authorId).then(profile => {
+      setAuthorEmail(displayHandle(profile ?? undefined, authorId));
+      setAuthorUsername(profile?.username ?? '');
+      setAuthorPhotoURL(profile?.photoURL ?? '');
     }).catch(() => setAuthorEmail(`user_${authorId.slice(0, 6)}`));
   }, [authorId]);
 
   useEffect(() => {
     if (!uid || !postId) return;
     isPostSaved(uid, postId).then(setSaved);
+    hasLiked(postId, uid).then(setLiked);
   }, [uid, postId]);
+
+  // The analysis job is readable only by the post's author, and only they
+  // can act on it - so nobody else pays for the listener either.
+  const isAuthor = Boolean(uid && post?.authorId === uid);
+  useEffect(() => {
+    if (!postId || !isAuthor || post?.analyzed) return;
+    const unsubscribe = onSnapshot(
+      doc(db, 'analysisJobs', postId),
+      (snap) => {
+        setJob(snap.exists() ? (snap.data() as AnalysisJob) : null);
+        setJobLoaded(true);
+      },
+      // A missing job document is normal (legacy posts); a denied read is
+      // not worth surfacing - the post itself still tells the story.
+      () => { setJob(null); setJobLoaded(true); }
+    );
+    return unsubscribe;
+  }, [postId, isAuthor, post?.analyzed]);
+
+  const analysisPhase: AnalysisPhase = (() => {
+    if (!post || post.analyzed) return 'none';
+    if (job?.status === 'failed') return 'exhausted';
+    if (job?.status === 'processing') return 'analyzing';
+    if (job?.status === 'queued') return (job.attempts ?? 0) > 0 ? 'retrying' : 'queued';
+    // No readable job: fall back to what the post itself records.
+    if (post.analysisStatus === 'processing') return 'analyzing';
+    if (post.analysisStatus === 'failed') return 'failed';
+    if (post.analysisStatus === 'pending') {
+      const age = mountedAt - new Date(post.createdAt).getTime();
+      if (jobLoaded && !job && age > STALLED_AFTER_MS) return 'stalled';
+      return 'queued';
+    }
+    return 'none';
+  })();
+
+  const handleRetryAnalysis = async () => {
+    if (!postId || retrying) return;
+    setRetrying(true);
+    setRetryNote('');
+    try {
+      const result = await requestAnalysis(postId);
+      if (result.status === 'failed') {
+        // Attempts are a spend budget: an exhausted post is re-armed by an
+        // operator, not by pressing a button repeatedly.
+        setRetryNote('This fit has used all its analysis attempts. Support can reset it.');
+        setRetrying(false);
+        return;
+      }
+      if (result.status === 'already_complete') {
+        setRetryNote('');
+        setRetrying(false);
+        return;
+      }
+      setReveal(prev => (prev === 'failed' || prev === 'timeout' ? 'waiting' : prev));
+      setRetrying(false);
+    } catch (error) {
+      const message = error instanceof ApiError && error.status === 429
+        ? 'Too many requests just now - give it a minute and try again.'
+        : 'Could not reach the analyzer. Try again in a moment.';
+      setRetryNote(message);
+      setRetrying(false);
+    }
+  };
 
   const handleLike = async () => {
     if (!post || !uid) return;
-    const wasLiked = post.likedBy?.includes(uid);
+    const wasLiked = liked;
+    setLiked(!wasLiked);
     setPost(prev => prev ? {
       ...prev,
       likesCount: wasLiked ? (prev.likesCount || 1) - 1 : (prev.likesCount || 0) + 1,
-      likedBy: wasLiked
-        ? prev.likedBy?.filter(id => id !== uid)
-        : [...(prev.likedBy || []), uid],
     } : null);
     const didLike = await toggleLike(post.id, uid);
+    setLiked(didLike);
     if (didLike && post.category) {
       await recordInteraction(uid, post.category, 'like');
     }
@@ -298,26 +352,14 @@ export default function PostDetail() {
 
   // FIX 10: show who liked
   const handleShowLikers = async () => {
-    if (!post?.likedBy || post.likedBy.length === 0) return;
+    if (!post || !post.likesCount) return;
     setLoadingLikers(true);
     setShowLikers(true);
-    const emails: string[] = [];
-    for (const likerId of post.likedBy.slice(0, 20)) {
-      try {
-        const userDoc = await getDoc(doc(db, 'users', likerId));
-        if (userDoc.exists()) {
-          const data = userDoc.data();
-          emails.push(
-            data.username
-              ? `@${data.username}`
-              : `@${data.email?.split('@')[0] || 'user'}`
-          );
-        }
-      } catch {
-        emails.push('@user');
-      }
-    }
-    setLikerEmails(emails);
+    // Bounded query over the likes subcollection, then one batched read of
+    // public handles instead of a serial read per liker.
+    const likerIds = await getLikerIds(post.id, 20);
+    const profiles = await getPublicProfiles(likerIds);
+    setLikerEmails(likerIds.map(id => `@${displayHandle(profiles[id], id)}`));
     setLoadingLikers(false);
   };
 
@@ -422,7 +464,7 @@ export default function PostDetail() {
               onClick={handleLike}
               className="flex items-center gap-1 text-sm"
             >
-              {post.likedBy?.includes(uid) ? '❤️' : '🤍'}
+              {liked ? '❤️' : '🤍'}
             </button>
             <button
               onClick={handleShowLikers}
@@ -509,7 +551,7 @@ export default function PostDetail() {
             </p>
           </div>
         )}
-        {reveal === 'failed' && !post.analyzed && (
+        {reveal === 'failed' && !post.analyzed && !isAuthor && (
           <div className="border border-[var(--border)] rounded-xl p-4 mb-4">
             <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text)] mb-1">
               No reading this time
@@ -517,6 +559,98 @@ export default function PostDetail() {
             <p className="text-sm text-[var(--text)] leading-relaxed">
               The analysis didn't come through for this fit. It's live everywhere it should be — the palette and aesthetics just won't show here.
             </p>
+          </div>
+        )}
+
+        {/* Analysis lifecycle — author only. Analysis runs as a durable
+            background job, so closing the tab does not cancel it and the
+            author is told which stage it is actually at rather than a single
+            indefinite "analyzing". */}
+        {isAuthor && analysisPhase !== 'none' && reveal !== 'waiting' && (
+          <div
+            className="border border-[var(--border)] rounded-xl p-4 mb-4"
+            role="status"
+            aria-live="polite"
+            data-testid="analysis-status"
+          >
+            {analysisPhase === 'queued' && (
+              <>
+                <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text)] mb-1">
+                  Queued
+                </p>
+                <p className="text-sm text-[var(--text)] leading-relaxed">
+                  Your fit is in line to be read. This runs on our side — you can close the app and it'll still finish.
+                </p>
+              </>
+            )}
+            {analysisPhase === 'analyzing' && (
+              <>
+                <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text)] mb-1">
+                  Analyzing
+                </p>
+                <p className="text-sm text-[var(--text)] leading-relaxed">
+                  Reading this fit now — the palette and aesthetics will land here on their own.
+                </p>
+              </>
+            )}
+            {analysisPhase === 'retrying' && (
+              <>
+                <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text)] mb-1">
+                  Trying again
+                </p>
+                <p className="text-sm text-[var(--text)] leading-relaxed">
+                  The first read didn't go through, so it's queued for another attempt
+                  {typeof job?.attempts === 'number' ? ` (attempt ${job.attempts + 1} of 3)` : ''}.
+                </p>
+              </>
+            )}
+            {analysisPhase === 'stalled' && (
+              <>
+                <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text)] mb-1">
+                  Analysis never started
+                </p>
+                <p className="text-sm text-[var(--text)] leading-relaxed mb-3">
+                  This fit never made it into the queue. Your post is live — you can ask for the reading now.
+                </p>
+                <button
+                  onClick={handleRetryAnalysis}
+                  disabled={retrying}
+                  className="text-xs border border-[var(--border)] rounded-full px-3 py-1.5 hover:border-[var(--accent)] hover:text-[var(--accent)] transition disabled:opacity-50 cursor-pointer"
+                >
+                  {retrying ? 'Sending…' : 'Analyze this fit'}
+                </button>
+              </>
+            )}
+            {analysisPhase === 'failed' && (
+              <>
+                <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text)] mb-1">
+                  Analysis didn't finish
+                </p>
+                <p className="text-sm text-[var(--text)] leading-relaxed mb-3">
+                  Your fit is live everywhere it should be — the palette and aesthetics just didn't come through.
+                </p>
+                <button
+                  onClick={handleRetryAnalysis}
+                  disabled={retrying}
+                  className="text-xs border border-[var(--border)] rounded-full px-3 py-1.5 hover:border-[var(--accent)] hover:text-[var(--accent)] transition disabled:opacity-50 cursor-pointer"
+                >
+                  {retrying ? 'Sending…' : 'Try analysis again'}
+                </button>
+              </>
+            )}
+            {analysisPhase === 'exhausted' && (
+              <>
+                <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text)] mb-1">
+                  Analysis unavailable for this fit
+                </p>
+                <p className="text-sm text-[var(--text)] leading-relaxed">
+                  We tried a few times and it didn't work out. The post is fine and fully live — it just won't have a palette or aesthetic tags.
+                </p>
+              </>
+            )}
+            {retryNote && (
+              <p className="text-xs text-[var(--text)] opacity-70 mt-2">{retryNote}</p>
+            )}
           </div>
         )}
 
@@ -537,11 +671,7 @@ export default function PostDetail() {
           <div className={`flex gap-2 mb-4${revealCls}`} style={revealDelay(0)}>
             {post.palette.map((color, i) => {
               const c = normalizeColor(color);
-              const isLight = c.hex === '#FFFFFF' || c.hex === '#ffffff' ||
-                (parseInt(c.hex.slice(1, 3), 16) > 200 &&
-                 parseInt(c.hex.slice(3, 5), 16) > 200 &&
-                 parseInt(c.hex.slice(5, 7), 16) > 200);
-              const textColor = isLight ? '#000000' : '#ffffff';
+              const textColor = isLightColor(c.hex) ? '#000000' : '#ffffff';
               return (
                 <div
                   key={i}

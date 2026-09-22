@@ -1,0 +1,5 @@
+# Development and test dependencies. NOT installed on Railway.
+-r requirements.txt
+
+pytest==9.1.1
+pyflakes==3.4.0            # unused-import / dead-name scan, run in CI

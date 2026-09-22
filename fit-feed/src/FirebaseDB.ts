@@ -1,12 +1,12 @@
 import {
   collection, addDoc, DocumentReference, getDocs, query, orderBy, where,
-  doc, getDoc, setDoc, updateDoc, increment, arrayUnion, arrayRemove, deleteDoc,
-  documentId,
+  doc, getDoc, setDoc, increment, deleteDoc, documentId, writeBatch,
 } from "firebase/firestore";
 import { getStorage, ref, deleteObject } from "firebase/storage";
 import { db } from "../firebase";
 import { FirebaseError } from "firebase/app";
 import { type Category } from "./constants/categories";
+import { toggleLikeTransactional, stageTasteBump } from "./interactionService";
 
 export interface User {
     uid: string;
@@ -17,7 +17,7 @@ export interface User {
     createdAt?: string;
 }
 
-// Attached by the /rank endpoint only — explains why the ranking engine
+// Attached by the /feed endpoint only — explains why the ranking engine
 // placed a post where it did. Absent when the feed falls back to unranked
 // order (Railway unreachable) or for tabs that don't use ranked order.
 export interface RankingFactors {
@@ -44,6 +44,9 @@ export interface Post {
     updatedAt?: string;
     outfitBreakdown?: string;
     likedBy?: string[];
+    // Server-computed on feed responses: whether the *viewer* liked this post.
+    // The feed API omits the full likedBy array, which is unbounded.
+    likedByMe?: boolean;
     palette?: (string | { hex: string; name: string; percentage: number })[];
     aesthetic?: string;
     aestheticTags?: string[];
@@ -53,9 +56,17 @@ export interface Post {
     aestheticScores?: Record<string, number>;
     analyzed?: boolean;
     // Additive (2026-08-27): written on NEW posts only — 'pending' at
-    // creation, 'complete'/'failed' after the analysis round-trip. Legacy
-    // posts lack the field; every consumer must treat absence as unknown.
-    analysisStatus?: 'pending' | 'complete' | 'failed';
+    // creation, then server-owned: 'processing' while a worker holds the
+    // post, 'complete'/'failed' once analysis resolves. Legacy posts lack
+    // the field; every consumer must treat absence as unknown.
+    analysisStatus?: 'pending' | 'processing' | 'complete' | 'failed';
+    // How many analysis attempts have been spent on this post. Server-owned;
+    // a post at the cap needs an operator to make it claimable again.
+    analysisAttempts?: number;
+    // Id of the comment the most recent commentsCount change accounted for.
+    // Written only as part of an atomic comment batch; the rules use it to
+    // prove the counter moved with a real comment.
+    lastCommentId?: string;
     outfitName?: string;
     _rankingFactors?: RankingFactors;
 }
@@ -152,29 +163,14 @@ export const getPostsByIds = async (ids: string[]): Promise<Post[]> => {
     }
 };
 
+/**
+ * Toggle a like. Delegates to the transactional implementation that writes
+ * posts/{id}/likes/{uid} alongside the counter - the unbounded likedBy array
+ * is no longer written by any client path.
+ */
 export const toggleLike = async (postId: string, uid: string): Promise<boolean> => {
     try {
-        const postRef = doc(db, "posts", postId);
-        const postSnap = await getDoc(postRef);
-
-        if (!postSnap.exists()) return false;
-
-        const likedBy: string[] = postSnap.data().likedBy || [];
-        const alreadyLiked = likedBy.includes(uid);
-
-        if (alreadyLiked) {
-            await updateDoc(postRef, {
-                likesCount: increment(-1),
-                likedBy: arrayRemove(uid),
-            });
-            return false; // unliked
-        } else {
-            await updateDoc(postRef, {
-                likesCount: increment(1),
-                likedBy: arrayUnion(uid),
-            });
-            return true; // liked
-        }
+        return await toggleLikeTransactional(postId, uid);
     } catch (error) {
         console.log("Error toggling like:", error);
         return false;
@@ -217,9 +213,9 @@ export const getComments = async (postId: string): Promise<Comment[]> => {
         const comments = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Comment));
         console.log(`[getComments] Fetched ${comments.length} comments for post ${postId}`);
         return comments;
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("[getComments] Error:", error);
-        if (error.code === "failed-precondition") {
+        if (error instanceof FirebaseError && error.code === "failed-precondition") {
             console.error("[getComments] Missing Firestore index. Click this link:", error.message);
         }
         return [];
@@ -232,19 +228,34 @@ export const addComment = async (
     authorEmail: string,
     content: string
 ): Promise<boolean> => {
+    const trimmed = content.trim();
+    if (!trimmed || trimmed.length > 1000) return false;
+
     try {
-        await addDoc(collection(db, "comments"), {
+        // One atomic batch: the comment and the denormalised counter move
+        // together, so a partial failure can no longer leave commentsCount
+        // drifting away from the real number of comments. The security rules
+        // only permit a +/-1 step on the counter, which this satisfies.
+        const batch = writeBatch(db);
+        const commentRef = doc(collection(db, "comments"));
+        batch.set(commentRef, {
             postId,
             authorId,
             authorEmail,
-            content,
+            content: trimmed,
             createdAt: new Date().toISOString(),
         });
-
-        // Increment commentsCount on the post
-        await updateDoc(doc(db, "posts", postId), {
+        // lastCommentId lets the security rules verify, against the
+        // post-commit state, that this counter step really corresponds to a
+        // comment created by this same batch.
+        // The comment is a taste signal, so its invalidation rides the same
+        // batch as the comment and the counter.
+        stageTasteBump(batch, authorId);
+        batch.update(doc(db, "posts", postId), {
             commentsCount: increment(1),
+            lastCommentId: commentRef.id,
         });
+        await batch.commit();
 
         return true;
     } catch (error) {
@@ -281,10 +292,9 @@ export const deletePost = async (postId: string, uid: string): Promise<boolean> 
             }
         }
 
-        // Delete the Firestore document
-        await deleteDoc(postRef);
-
-        // Delete associated comments
+        // Delete associated comments BEFORE the post itself. The rules let a
+        // post author remove comments on their own post, and that check reads
+        // the post document — so the post has to still exist at that point.
         const commentsQuery = query(
             collection(db, "comments"),
             where("postId", "==", postId)
@@ -293,6 +303,9 @@ export const deletePost = async (postId: string, uid: string): Promise<boolean> 
         await Promise.all(
             commentsSnapshot.docs.map(commentDoc => deleteDoc(commentDoc.ref))
         );
+
+        // Delete the Firestore document
+        await deleteDoc(postRef);
 
         console.log(`[deletePost] Post ${postId} deleted successfully`);
         return true;
@@ -370,12 +383,16 @@ export const getFollowingIds = async (uid: string): Promise<string[]> => {
 
 export const savePost = async (uid: string, postId: string): Promise<boolean> => {
     try {
-        const saveId = `${uid}_${postId}`;
-        await setDoc(doc(db, 'saves', saveId), {
+        // A save carries more weight than a like in the taste model, so the
+        // staleness marker moves in the same batch as the save itself.
+        const batch = writeBatch(db);
+        batch.set(doc(db, 'saves', `${uid}_${postId}`), {
             uid,
             postId,
             createdAt: new Date().toISOString(),
         });
+        stageTasteBump(batch, uid);
+        await batch.commit();
         return true;
     } catch (error) {
         console.error('[savePost] Error:', error);
@@ -385,8 +402,10 @@ export const savePost = async (uid: string, postId: string): Promise<boolean> =>
 
 export const unsavePost = async (uid: string, postId: string): Promise<boolean> => {
     try {
-        const saveId = `${uid}_${postId}`;
-        await deleteDoc(doc(db, 'saves', saveId));
+        const batch = writeBatch(db);
+        batch.delete(doc(db, 'saves', `${uid}_${postId}`));
+        stageTasteBump(batch, uid);
+        await batch.commit();
         return true;
     } catch (error) {
         console.error('[unsavePost] Error:', error);

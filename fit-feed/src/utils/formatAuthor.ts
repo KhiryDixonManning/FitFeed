@@ -1,5 +1,9 @@
-export const formatAuthor = (email: string, username?: string): string => {
+// Renders an author handle. Takes the public handle (username or public
+// displayName) - never a private email. A value containing "@" is tolerated
+// so legacy callers passing an email still render sensibly.
+export const formatAuthor = (handle?: string, username?: string): string => {
   if (username) return `@${username}`;
-  if (email && email.includes('@')) return `@${email.split('@')[0]}`;
-  return `@${email?.slice(0, 8) || 'user'}`;
+  if (!handle) return '@user';
+  const local = handle.includes('@') ? handle.split('@')[0] : handle;
+  return `@${local || 'user'}`;
 };
